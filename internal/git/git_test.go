@@ -74,6 +74,18 @@ func TestExecGitLifecycle(t *testing.T) {
 	}
 }
 
+func TestRunErrorIncludesGitStderr(t *testing.T) {
+	// Run git in a directory that is not a repository. The failure message
+	// must include git's stderr so the user can still debug what went wrong.
+	err := run(t.TempDir(), "status")
+	if err == nil {
+		t.Fatal("run() = nil error, want failure outside a repository")
+	}
+	if !strings.Contains(err.Error(), "not a git repository") {
+		t.Errorf("error = %q, want it to include git's stderr", err)
+	}
+}
+
 func TestCommitStagesDeletion(t *testing.T) {
 	setGitIdentity(t)
 	root := t.TempDir()

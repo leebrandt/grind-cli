@@ -3,7 +3,6 @@ package git
 import (
 	"bytes"
 	"errors"
-	"os"
 	"os/exec"
 	"strings"
 
@@ -106,29 +105,30 @@ func branchExists(repoPath, branch string) (bool, error) {
 	return false, err
 }
 
-// run executes git in dir ("" for the current directory), inheriting
-// stdout/stderr so git progress and errors reach the terminal.
+// run executes git in dir ("" for the current directory). Output is
+// captured and discarded on success so git's chatter never leaks into
+// grind's output; on failure the captured stderr is included in the error
+// so the user can still debug.
 func run(dir string, args ...string) error {
-	cmd := exec.Command("git", withDir(dir, args)...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		return grinderr.WrapSystem(err, "git %s", strings.Join(args, " "))
-	}
-	return nil
+	_, err := output(dir, args...)
+	return err
 }
 
-// output executes git in dir and returns its trimmed stdout. Stderr is
-// inherited so git errors stay visible.
+// output executes git in dir and returns its trimmed stdout. Like run, it
+// captures stderr and includes it in the error on failure.
 func output(dir string, args ...string) (string, error) {
 	cmd := exec.Command("git", withDir(dir, args)...)
-	var buf bytes.Buffer
-	cmd.Stdout = &buf
-	cmd.Stderr = os.Stderr
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		return "", grinderr.WrapSystem(err, "git %s", strings.Join(args, " "))
+		msg := strings.TrimSpace(stderr.String())
+		if msg == "" {
+			msg = err.Error()
+		}
+		return "", grinderr.WrapSystem(err, "git %s: %s", strings.Join(args, " "), msg)
 	}
-	return strings.TrimSpace(buf.String()), nil
+	return strings.TrimSpace(stdout.String()), nil
 }
 
 // withDir prefixes args with -C dir when dir is non-empty, so the command
