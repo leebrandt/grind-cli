@@ -25,6 +25,12 @@ func NewRootCmd(g git.Git) *cobra.Command {
 		// stay quiet and let us control the output.
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		// Cobra adds a `completion` command by default. Hide it from help —
+		// it still works, it's just out of sight (same trick as the `ideas`
+		// alias).
+		CompletionOptions: cobra.CompletionOptions{
+			HiddenDefaultCmd: true,
+		},
 	}
 
 	root.AddCommand(newInitCmd(g))
