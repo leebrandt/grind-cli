@@ -159,6 +159,12 @@ func (w *Workspace) ProjectsConfigPath() string {
 	return filepath.Join(w.MainWorktree, ".projects.json")
 }
 
+// ProjectWorktreePath returns the path to a project's worktree. Project
+// worktrees are siblings of .main, one per project.
+func (w *Workspace) ProjectWorktreePath(name string) string {
+	return filepath.Join(w.Root, name)
+}
+
 func isDir(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()

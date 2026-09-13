@@ -2,20 +2,23 @@ package cli
 
 import (
 	"fmt"
+	"text/tabwriter"
 
 	"github.com/leebrandt/grind/internal/ideas"
+	"github.com/leebrandt/grind/internal/projects"
 	"github.com/leebrandt/grind/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
-// newListCmd builds the `list` command group. This slice only has
-// `list ideas`.
-func newListCmd(svc *ideas.Service) *cobra.Command {
+// newListCmd builds the `list` command group: `list ideas` and
+// `list projects`.
+func newListCmd(ideasSvc *ideas.Service, projectsSvc *projects.Service) *cobra.Command {
 	list := &cobra.Command{
 		Use:   "list",
 		Short: "List things",
 	}
-	list.AddCommand(newListIdeasCmd(svc))
+	list.AddCommand(newListIdeasCmd(ideasSvc))
+	list.AddCommand(newListProjectsCmd(projectsSvc))
 	return list
 }
 
@@ -80,5 +83,62 @@ func listIdeasRunE(svc *ideas.Service) func(cmd *cobra.Command, args []string) e
 			fmt.Fprintln(cmd.OutOrStdout(), idea.String())
 		}
 		return nil
+	}
+}
+
+// newListProjectsCmd builds `grind list projects`.
+func newListProjectsCmd(svc *projects.Service) *cobra.Command {
+	return &cobra.Command{
+		Use:   "projects",
+		Short: "List projects",
+		Args:  cobra.NoArgs,
+		RunE:  listProjectsRunE(svc),
+	}
+}
+
+// newProjectsAliasCmd builds the hidden `grind projects` shortcut for
+// `grind list projects`, mirroring the `ideas` alias trick.
+func newProjectsAliasCmd(svc *projects.Service) *cobra.Command {
+	return &cobra.Command{
+		Use:    "projects",
+		Short:  "List projects (alias for 'list projects')",
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		RunE:   listProjectsRunE(svc),
+	}
+}
+
+// listProjectsRunE is the shared body of `list projects` and the hidden
+// `projects` alias.
+func listProjectsRunE(svc *projects.Service) func(cmd *cobra.Command, args []string) error {
+	return func(cmd *cobra.Command, args []string) error {
+		ws, err := workspace.Require(".")
+		if err != nil {
+			return err
+		}
+		list, err := svc.List(ws)
+		if err != nil {
+			return err
+		}
+		out := cmd.OutOrStdout()
+		if len(list) == 0 {
+			fmt.Fprintln(out, "No projects yet. Create one with: grind new project \"name\" <idea-number>")
+			return nil
+		}
+
+		// tabwriter aligns the columns; the padding of 2 spaces matches the
+		// spec's example output.
+		tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+		fmt.Fprintln(tw, "Project\tType\tCreated")
+		for _, entry := range list {
+			projectType := entry.Type
+			if projectType == "" {
+				// An em dash keeps the column aligned when the type is
+				// unset, and reads better than an empty cell.
+				projectType = "—"
+			}
+			fmt.Fprintf(tw, "%s\t%s\t%s\n", entry.Name, projectType, entry.CreatedAt.Format("2006-01-02"))
+		}
+		return tw.Flush()
 	}
 }

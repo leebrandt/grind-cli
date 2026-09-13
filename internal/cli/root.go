@@ -10,13 +10,15 @@ import (
 	"github.com/leebrandt/grind/internal/git"
 	"github.com/leebrandt/grind/internal/grinderr"
 	"github.com/leebrandt/grind/internal/ideas"
+	"github.com/leebrandt/grind/internal/projects"
 	"github.com/spf13/cobra"
 )
 
 // NewRootCmd builds the complete grind command tree. The git implementation
 // is injected so tests can substitute a fake.
 func NewRootCmd(g git.Git) *cobra.Command {
-	svc := ideas.NewService(g)
+	ideasSvc := ideas.NewService(g)
+	projectsSvc := projects.NewService(g)
 
 	root := &cobra.Command{
 		Use:   "grind",
@@ -34,12 +36,14 @@ func NewRootCmd(g git.Git) *cobra.Command {
 	}
 
 	root.AddCommand(newInitCmd(g))
-	root.AddCommand(newNewCmd(svc))
-	root.AddCommand(newListCmd(svc))
-	root.AddCommand(newIdeasAliasCmd(svc))
-	root.AddCommand(newEditCmd(svc))
-	root.AddCommand(newRejectCmd(svc))
-	root.AddCommand(newPruneCmd(svc))
+	root.AddCommand(newNewCmd(ideasSvc, projectsSvc))
+	root.AddCommand(newListCmd(ideasSvc, projectsSvc))
+	root.AddCommand(newIdeasAliasCmd(ideasSvc))
+	root.AddCommand(newProjectsAliasCmd(projectsSvc))
+	root.AddCommand(newEditCmd(ideasSvc))
+	root.AddCommand(newRejectCmd(ideasSvc))
+	root.AddCommand(newPruneCmd(ideasSvc))
+	root.AddCommand(newShowCmd(projectsSvc))
 
 	return root
 }

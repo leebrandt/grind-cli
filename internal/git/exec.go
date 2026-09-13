@@ -3,6 +3,7 @@ package git
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"os/exec"
 	"strings"
 
@@ -23,17 +24,7 @@ func (g *execGit) InitBare(path string) error {
 // empty tree object: hash the empty tree, commit it, then point the branch
 // ref at the resulting commit.
 func (g *execGit) InitialCommit(repoPath, branch string) error {
-	treeHash, err := output(repoPath, "hash-object", "-t", "tree", "/dev/null")
-	if err != nil {
-		return err
-	}
-
-	// commit-tree needs an author/committer identity. The freshly created
-	// bare repo has no user config, so provide one via -c flags.
-	commitHash, err := output(repoPath,
-		"-c", "user.name=grind",
-		"-c", "user.email=grind@localhost",
-		"commit-tree", treeHash, "-m", "Initial commit")
+	commitHash, err := emptyTreeCommit(repoPath, "Initial commit")
 	if err != nil {
 		return err
 	}
@@ -47,6 +38,55 @@ func (g *execGit) InitialCommit(repoPath, branch string) error {
 	// branch name that was never created, which makes worktree add fail with
 	// "invalid reference: HEAD".
 	return run(repoPath, "symbolic-ref", "HEAD", "refs/heads/"+branch)
+}
+
+// emptyTreeCommit creates a commit with an empty tree in repoPath and
+// returns its hash. A bare repo has no working tree, so the commit is
+// assembled from an empty tree object rather than from staged files.
+func emptyTreeCommit(repoPath, message string) (string, error) {
+	treeHash, err := output(repoPath, "hash-object", "-t", "tree", "/dev/null")
+	if err != nil {
+		return "", err
+	}
+
+	// commit-tree needs an author/committer identity. The freshly created
+	// bare repo has no user config, so provide one via -c flags.
+	return output(repoPath,
+		"-c", "user.name=grind",
+		"-c", "user.email=grind@localhost",
+		"commit-tree", treeHash, "-m", message)
+}
+
+// CreateBranch creates a branch pointing at an empty-tree commit. Project
+// branches start from an empty tree so the worktree contains only the
+// actual work product — no configs, no state files.
+func (g *execGit) CreateBranch(repoPath, branch string) error {
+	exists, err := branchExists(repoPath, branch)
+	if err != nil {
+		return err
+	}
+	if exists {
+		// A leftover branch is an environment inconsistency, not a user
+		// mistake, so it is a system error.
+		return grinderr.NewSystem(fmt.Sprintf("branch %s already exists", branch))
+	}
+
+	commitHash, err := emptyTreeCommit(repoPath, "Initialize project branch")
+	if err != nil {
+		return err
+	}
+	return run(repoPath, "update-ref", "refs/heads/"+branch, commitHash)
+}
+
+// IsClean reports whether `git status --porcelain` in worktreePath is
+// empty. Untracked files count as dirty, so a stray file in .main blocks
+// project creation.
+func (g *execGit) IsClean(worktreePath string) (bool, error) {
+	out, err := output(worktreePath, "status", "--porcelain")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) == "", nil
 }
 
 // AddWorktree adds a worktree at worktreePath checked out to branch. If the

@@ -186,3 +186,130 @@ func TestCommitRefusesUnmergedPaths(t *testing.T) {
 		t.Fatal("Commit() = nil error, want refusal due to unmerged paths")
 	}
 }
+
+func TestIsClean(t *testing.T) {
+	setGitIdentity(t)
+	root := t.TempDir()
+	g := New()
+
+	bareRepo := filepath.Join(root, ".grind.repo.git")
+	if err := g.InitBare(bareRepo); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.InitialCommit(bareRepo, "main"); err != nil {
+		t.Fatal(err)
+	}
+	main := filepath.Join(root, ".main")
+	if err := g.AddWorktree(bareRepo, main, "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	// A freshly added worktree is clean.
+	clean, err := g.IsClean(main)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !clean {
+		t.Error("IsClean = false, want true for empty worktree")
+	}
+
+	// A modified tracked file makes it dirty.
+	file := filepath.Join(main, "dirty.txt")
+	if err := os.WriteFile(file, []byte("v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Commit(main, "Add dirty.txt", "dirty.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte("v2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	clean, err = g.IsClean(main)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clean {
+		t.Error("IsClean = true, want false for modified file")
+	}
+
+	// An untracked file also makes it dirty.
+	if err := os.Remove(file); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Commit(main, "Remove dirty.txt", "dirty.txt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(main, "untracked.txt"), []byte("new\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	clean, err = g.IsClean(main)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clean {
+		t.Error("IsClean = true, want false for untracked file")
+	}
+}
+
+func TestCreateBranch(t *testing.T) {
+	setGitIdentity(t)
+	root := t.TempDir()
+	g := New()
+
+	bareRepo := filepath.Join(root, ".grind.repo.git")
+	if err := g.InitBare(bareRepo); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.InitialCommit(bareRepo, "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := g.CreateBranch(bareRepo, "my-blog"); err != nil {
+		t.Fatalf("CreateBranch() error = %v", err)
+	}
+
+	// The branch must exist and point at a commit with an empty tree.
+	tree, err := output(bareRepo, "rev-parse", "my-blog^{tree}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	emptyTree, err := output(bareRepo, "hash-object", "-t", "tree", "/dev/null")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tree != emptyTree {
+		t.Errorf("branch tree = %q, want empty tree %q", tree, emptyTree)
+	}
+
+	// Creating the same branch again must fail.
+	if err := g.CreateBranch(bareRepo, "my-blog"); err == nil {
+		t.Error("CreateBranch() = nil error, want failure for existing branch")
+	}
+}
+
+func TestAddWorktreeExistingBranch(t *testing.T) {
+	setGitIdentity(t)
+	root := t.TempDir()
+	g := New()
+
+	bareRepo := filepath.Join(root, ".grind.repo.git")
+	if err := g.InitBare(bareRepo); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.InitialCommit(bareRepo, "main"); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.CreateBranch(bareRepo, "my-blog"); err != nil {
+		t.Fatal(err)
+	}
+
+	// AddWorktree with an existing branch must not pass -b, which git would
+	// refuse.
+	wt := filepath.Join(root, "my-blog")
+	if err := g.AddWorktree(bareRepo, wt, "my-blog"); err != nil {
+		t.Fatalf("AddWorktree() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(wt, ".git")); err != nil {
+		t.Fatalf("worktree not created: %v", err)
+	}
+}

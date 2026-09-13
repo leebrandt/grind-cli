@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/leebrandt/grind/internal/grinderr"
 )
@@ -80,10 +81,24 @@ type ProjectsConfig struct {
 	Projects map[string]ProjectEntry `json:"projects"`
 }
 
-// ProjectEntry is the per-project state block. Later slices fill this out;
-// this slice only needs the name.
+// ProjectEntry is the per-project state block. The domain type lives here
+// (not in internal/projects) because projects imports workspace, which
+// imports config — a projects-owned type would create an import cycle.
 type ProjectEntry struct {
-	Name string `json:"name"`
+	Name      string       `json:"name"`
+	Type      string       `json:"type,omitempty"`
+	Idea      string       `json:"idea"`
+	Billing   BillingEntry `json:"billing"`
+	CreatedAt time.Time    `json:"createdAt"`
+}
+
+// BillingEntry is the per-project billing block. Each project carries its
+// own copy of the workspace defaults so later rate changes do not rewrite
+// history — per-project billing is a hard requirement from the design
+// constitution.
+type BillingEntry struct {
+	RoundTo string  `json:"roundTo"`
+	Rate    float64 `json:"rate"`
 }
 
 // DefaultProjects returns the empty projects skeleton.
@@ -97,6 +112,20 @@ func DefaultProjects() ProjectsConfig {
 // WriteProjects saves the projects config atomically.
 func WriteProjects(path string, cfg ProjectsConfig) error {
 	return writeJSON(path, cfg)
+}
+
+// ReadProjects loads a ProjectsConfig from path. A missing file surfaces as
+// a system error; callers decide whether to treat it as an empty workspace.
+func ReadProjects(path string) (ProjectsConfig, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ProjectsConfig{}, grinderr.WrapSystem(err, "read projects file")
+	}
+	var cfg ProjectsConfig
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return ProjectsConfig{}, grinderr.WrapSystem(err, "parse projects file")
+	}
+	return cfg, nil
 }
 
 // writeJSON marshals v with 2-space indentation and writes it atomically.

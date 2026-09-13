@@ -11,7 +11,7 @@
 //     the config-on-main design).
 package git
 
-// Git is the set of git operations this slice needs.
+// Git is the set of git operations grind needs.
 type Git interface {
 	// InitBare creates a bare repository at path.
 	InitBare(path string) error
@@ -26,6 +26,16 @@ type Git interface {
 	// commits them with message. It refuses to commit when no paths are
 	// given or when unmerged paths exist.
 	Commit(worktreePath, message string, paths ...string) error
+	// IsClean reports whether the worktree has no uncommitted changes,
+	// including untracked files. The main worktree must be clean before any
+	// command that commits state, so unrelated edits are never swept into a
+	// commit.
+	IsClean(worktreePath string) (bool, error)
+	// CreateBranch creates a branch pointing at an empty-tree commit in the
+	// bare repo. Project branches start from an empty tree so the worktree
+	// contains only the actual work product, never grind's state files. It
+	// errors when the branch already exists.
+	CreateBranch(repoPath, branch string) error
 }
 
 // New returns the production implementation backed by os/exec.

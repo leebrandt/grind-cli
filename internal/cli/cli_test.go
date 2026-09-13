@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/leebrandt/grind/internal/config"
 	"github.com/leebrandt/grind/internal/git"
 	"github.com/leebrandt/grind/internal/workspace"
 )
@@ -14,7 +15,9 @@ import (
 // fakeGit records commits so CLI tests can assert what would have been sent
 // to real git.
 type fakeGit struct {
-	commits []fakeCommit
+	commits      []fakeCommit
+	createBranch []string
+	isClean      bool
 }
 
 type fakeCommit struct {
@@ -34,13 +37,20 @@ func (f *fakeGit) Commit(worktreePath, message string, paths ...string) error {
 	return nil
 }
 
+func (f *fakeGit) IsClean(worktreePath string) (bool, error) { return f.isClean, nil }
+
+func (f *fakeGit) CreateBranch(repoPath, branch string) error {
+	f.createBranch = append(f.createBranch, branch)
+	return nil
+}
+
 // runInWorkspace creates a workspace in a temp dir, chdirs into it, and
 // returns a cleanup function. The fake git is returned so tests can pass it
 // to NewRootCmd and assert on the recorded commits.
 func runInWorkspace(t *testing.T) (*fakeGit, func()) {
 	t.Helper()
 	dir := t.TempDir()
-	fake := &fakeGit{}
+	fake := &fakeGit{isClean: true}
 	if err := workspace.Init(fake, dir); err != nil {
 		t.Fatalf("workspace.Init: %v", err)
 	}
@@ -290,6 +300,390 @@ func TestParseIdeaNumber(t *testing.T) {
 	}
 	if _, err := parseIdeaNumber("abc"); err == nil {
 		t.Error("expected error for non-numeric input")
+	}
+}
+
+func TestNewProjectCommand(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	if _, err := execute(t, fake, "new", "idea", "My Blog"); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := execute(t, fake, "new", "project", "my-blog", "0", "-t", "blog")
+	if err != nil {
+		t.Fatalf("new project: %v", err)
+	}
+	if !strings.Contains(out, "Created project: my-blog") {
+		t.Errorf("output = %q", out)
+	}
+	if !strings.Contains(out, "Branch: my-blog") {
+		t.Errorf("output = %q", out)
+	}
+	if !strings.Contains(out, "Worktree: my-blog/") {
+		t.Errorf("output = %q", out)
+	}
+	if !strings.Contains(out, "Next: cd my-blog") {
+		t.Errorf("output = %q", out)
+	}
+	if !strings.Contains(out, "Remaining ideas:") {
+		t.Errorf("output = %q", out)
+	}
+
+	// CreateBranch must have been called with the project name.
+	if len(fake.createBranch) != 1 || fake.createBranch[0] != "my-blog" {
+		t.Errorf("CreateBranch calls = %v", fake.createBranch)
+	}
+
+	// The last two commits must be the project creation commits.
+	commits := fake.commits
+	if len(commits) < 3 {
+		t.Fatalf("commits = %d, want at least 3 (init + idea + 2 project)", len(commits))
+	}
+	c1 := commits[len(commits)-2]
+	if c1.message != "Create project: my-blog" {
+		t.Errorf("commit message = %q", c1.message)
+	}
+	if len(c1.paths) != 1 || c1.paths[0] != ".projects.json" {
+		t.Errorf("commit paths = %v", c1.paths)
+	}
+	c2 := commits[len(commits)-1]
+	if !strings.HasPrefix(c2.message, "Remove idea ") {
+		t.Errorf("commit message = %q", c2.message)
+	}
+	if len(c2.paths) != 1 || !strings.HasPrefix(c2.paths[0], "ideas/") {
+		t.Errorf("commit paths = %v", c2.paths)
+	}
+
+	// The idea file must be gone from .main/ideas.
+	entries, err := os.ReadDir(filepath.Join(".main", "ideas"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".md") {
+			t.Errorf("ideas dir still has %q after promotion", e.Name())
+		}
+	}
+}
+
+func TestNewProjectNoType(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	if _, err := execute(t, fake, "new", "idea", "My Blog"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := execute(t, fake, "new", "project", "my-blog", "0"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The project entry must have an empty type.
+	projects, err := config.ReadProjects(filepath.Join(".main", ".projects.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, exists := projects.Projects["my-blog"]
+	if !exists {
+		t.Fatal("project not found")
+	}
+	if entry.Type != "" {
+		t.Errorf("Type = %q, want empty", entry.Type)
+	}
+}
+
+func TestNewProjectLongTypeFlag(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	if _, err := execute(t, fake, "new", "idea", "My Blog"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := execute(t, fake, "new", "project", "my-blog", "0", "--type", "blog"); err != nil {
+		t.Fatal(err)
+	}
+
+	projects, err := config.ReadProjects(filepath.Join(".main", ".projects.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry, exists := projects.Projects["my-blog"]
+	if !exists {
+		t.Fatal("project not found")
+	}
+	if entry.Type != "blog" {
+		t.Errorf("Type = %q, want blog", entry.Type)
+	}
+}
+
+func TestListProjectsEmptyTypeRendersDash(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	if _, err := execute(t, fake, "new", "idea", "My Blog"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := execute(t, fake, "new", "project", "my-blog", "0"); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := execute(t, fake, "list", "projects")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "—") {
+		t.Errorf("output = %q, want em-dash for empty type", out)
+	}
+}
+
+func TestShowEmptyTypeRendersDash(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	if _, err := execute(t, fake, "new", "idea", "My Blog"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := execute(t, fake, "new", "project", "my-blog", "0"); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := execute(t, fake, "show", "my-blog")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Type:    —") {
+		t.Errorf("output = %q, want em-dash for empty type", out)
+	}
+}
+
+func TestListProjectsCommand(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	if _, err := execute(t, fake, "new", "idea", "My Blog"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := execute(t, fake, "new", "project", "my-blog", "0", "-t", "blog"); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := execute(t, fake, "list", "projects")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Project") || !strings.Contains(out, "Type") || !strings.Contains(out, "Created") {
+		t.Errorf("output = %q", out)
+	}
+	if !strings.Contains(out, "my-blog") || !strings.Contains(out, "blog") {
+		t.Errorf("output = %q", out)
+	}
+}
+
+func TestListProjectsEmptyState(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	out, err := execute(t, fake, "list", "projects")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "No projects yet. Create one with: grind new project \"name\" <idea-number>\n"
+	if out != want {
+		t.Errorf("output = %q, want %q", out, want)
+	}
+}
+
+func TestProjectsAliasCommand(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	if _, err := execute(t, fake, "new", "idea", "My Blog"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := execute(t, fake, "new", "project", "my-blog", "0"); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := execute(t, fake, "projects")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "my-blog") {
+		t.Errorf("output = %q", out)
+	}
+}
+
+func TestShowCommand(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	if _, err := execute(t, fake, "new", "idea", "My Blog"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := execute(t, fake, "new", "project", "my-blog", "0", "-t", "blog"); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := execute(t, fake, "show", "my-blog")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Name:    my-blog") {
+		t.Errorf("output = %q", out)
+	}
+	if !strings.Contains(out, "Type:    blog") {
+		t.Errorf("output = %q", out)
+	}
+	if !strings.Contains(out, "Rate:    150/hr (quarter-hour)") {
+		t.Errorf("output = %q", out)
+	}
+	if !strings.Contains(out, "# My Blog") {
+		t.Errorf("output = %q", out)
+	}
+}
+
+func TestShowCommandWithCurrency(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	// Set a currency in .grind.json.
+	cfg := config.Default()
+	cfg.Currency = "$"
+	if err := config.Write(filepath.Join(".main", ".grind.json"), cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := execute(t, fake, "new", "idea", "My Blog"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := execute(t, fake, "new", "project", "my-blog", "0"); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := execute(t, fake, "show", "my-blog")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Rate:    $150/hr (quarter-hour)") {
+		t.Errorf("output = %q", out)
+	}
+}
+
+func TestShowUnknownProject(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	_, err := execute(t, fake, "show", "nope")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "Project 'nope' not found.") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestNewProjectDirtyMain(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	if _, err := execute(t, fake, "new", "idea", "My Blog"); err != nil {
+		t.Fatal(err)
+	}
+	fake.isClean = false
+
+	_, err := execute(t, fake, "new", "project", "my-blog", "0")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "You have uncommitted changes in .main.") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestNewProjectBadIdeaNumber(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	_, err := execute(t, fake, "new", "project", "my-blog", "abc")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "Idea must be a number") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestNewProjectIdeaNotFound(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	_, err := execute(t, fake, "new", "project", "my-blog", "5")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "Idea #5 not found.") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestNewProjectExistingProject(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	if _, err := execute(t, fake, "new", "idea", "My Blog"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := execute(t, fake, "new", "project", "my-blog", "0"); err != nil {
+		t.Fatal(err)
+	}
+	// Create another idea so there is something to promote.
+	if _, err := execute(t, fake, "new", "idea", "Another"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := execute(t, fake, "new", "project", "my-blog", "0")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "Project 'my-blog' already exists.") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestNewProjectUnknownType(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	if _, err := execute(t, fake, "new", "idea", "My Blog"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := execute(t, fake, "new", "project", "my-blog", "0", "-t", "nonsense")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "Invalid type: nonsense.") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestNewProjectNotInWorkspace(t *testing.T) {
+	dir := t.TempDir()
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldDir)
+
+	_, err = execute(t, &fakeGit{}, "new", "project", "my-blog", "0")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "Not in a grind workspace.") {
+		t.Errorf("error = %q", err.Error())
 	}
 }
 

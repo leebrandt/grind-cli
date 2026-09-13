@@ -118,6 +118,7 @@ func TestPathHelpers(t *testing.T) {
 		{"PublishedDir", ws.PublishedDir(), "/ws/.main/published"},
 		{"GrindConfigPath", ws.GrindConfigPath(), "/ws/.main/.grind.json"},
 		{"ProjectsConfigPath", ws.ProjectsConfigPath(), "/ws/.main/.projects.json"},
+		{"ProjectWorktreePath", ws.ProjectWorktreePath("my-blog"), "/ws/my-blog"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -162,6 +163,10 @@ func (f *fakeGit) Commit(worktreePath, message string, paths ...string) error {
 	f.commits = append(f.commits, fakeCommit{worktree: worktreePath, message: message, paths: paths})
 	return nil
 }
+
+func (f *fakeGit) IsClean(worktreePath string) (bool, error) { return true, nil }
+
+func (f *fakeGit) CreateBranch(repoPath, branch string) error { return nil }
 
 func TestInit(t *testing.T) {
 	dir := t.TempDir()
