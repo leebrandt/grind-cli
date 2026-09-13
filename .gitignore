@@ -1,0 +1,9 @@
+# Compiled binary
+/grind
+
+# Test artifacts
+coverage/
+*.test
+
+# Editor/OS noise
+.DS_Store
