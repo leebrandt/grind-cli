@@ -46,17 +46,20 @@ type Git interface {
 	// staging everything there IS "stage the specific files changed".
 	CommitAll(worktreePath, message string) error
 	// RemoteURL returns the origin remote URL, or "" when no remote is
-	// configured. `save` uses it to decide whether pushing is possible.
+	// configured. `push` uses it to give a clean error when there is
+	// nothing to push to.
 	RemoteURL(repoPath string) (string, error)
-	// Push runs `git push origin <branch>` in the bare repo. A failed push
-	// is not fatal — the work is committed locally — so the error carries
-	// git's stderr for a warning instead of a hard failure.
-	Push(repoPath, branch string) error
+	// PushAll runs `git push origin --all` in the bare repo, pushing every
+	// branch (the default branch plus each project branch) so the remote
+	// mirrors the local bare repo. A failed push is not fatal — the work is
+	// committed locally — so the error carries git's stderr for a clean
+	// message instead of a hard failure.
+	PushAll(repoPath string) error
 }
 
-// PushError is returned by Push when git push fails. It carries git's
-// stderr so callers can print a warning without treating the failure as
-// fatal: the work is saved locally, the remote is best-effort.
+// PushError is returned by PushAll when git push fails. It carries git's
+// stderr so callers can print a clean message without treating the failure
+// as fatal: the work is committed locally, the remote is best-effort.
 type PushError struct {
 	Stderr string
 	Err    error

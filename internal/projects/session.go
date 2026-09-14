@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/leebrandt/grind/internal/config"
-	"github.com/leebrandt/grind/internal/git"
 	"github.com/leebrandt/grind/internal/grinderr"
 	"github.com/leebrandt/grind/internal/workspace"
 )
@@ -211,10 +210,12 @@ func (s *Service) EndSession(ws *workspace.Workspace, name string, backfill floa
 	return session, nil
 }
 
-// Save commits the project worktree (if dirty) and pushes both branches.
-// session is the session EndSession just ended (nil when there was none);
-// it decides the worktree commit message. Called by the CLI after
-// EndSession.
+// Save commits the project worktree (if dirty). session is the session
+// EndSession just ended (nil when there was none); it decides the worktree
+// commit message. Called by the CLI after EndSession.
+//
+// Save is deliberately LOCAL: it commits the work but never pushes. Remote
+// sync is `grind push`'s job, so saving stays fast and works offline.
 func (s *Service) Save(ws *workspace.Workspace, name string, session *config.Session) error {
 	// The project worktree holds the actual work product. If it is dirty,
 	// commit everything — the documented CommitAll exception, because a
@@ -230,40 +231,6 @@ func (s *Service) Save(ws *workspace.Workspace, name string, session *config.Ses
 			msg = fmt.Sprintf("Work session on %s (%sh)", name, FormatHours(session.Rounded))
 		}
 		if err := s.Git.CommitAll(worktreePath, msg); err != nil {
-			return err
-		}
-	}
-
-	// Pushing is best-effort: no remote means nothing to do, and a failed
-	// push is a warning, not an error — the work is saved locally.
-	remote, err := s.Git.RemoteURL(ws.BareRepo)
-	if err != nil {
-		return err
-	}
-	if remote == "" {
-		return nil
-	}
-
-	// The default branch comes from .grind.json; a missing file falls back
-	// to config.Default(), whose empty DefaultBranch means "main".
-	cfg, err := readConfig(ws)
-	if err != nil {
-		return err
-	}
-	defaultBranch := cfg.DefaultBranch
-	if defaultBranch == "" {
-		defaultBranch = "main"
-	}
-
-	// Both branches must reach the remote or the remote is useless — v1
-	// only pushed the state, so the actual work never left the machine.
-	for _, branch := range []string{name, defaultBranch} {
-		if err := s.Git.Push(ws.BareRepo, branch); err != nil {
-			var pushErr *git.PushError
-			if errors.As(err, &pushErr) {
-				fmt.Fprintf(os.Stderr, "Warning: could not push to remote: %s\n", pushErr.Stderr)
-				continue
-			}
 			return err
 		}
 	}

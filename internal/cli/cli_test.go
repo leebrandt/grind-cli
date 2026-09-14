@@ -6,13 +6,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/leebrandt/grind/internal/config"
 	"github.com/leebrandt/grind/internal/git"
+	"github.com/leebrandt/grind/internal/grinderr"
 	"github.com/leebrandt/grind/internal/workspace"
 )
 
@@ -25,7 +25,7 @@ type fakeGit struct {
 	hasChanges   bool
 	commitAll    []fakeCommit
 	remoteURL    string
-	pushes       []string
+	pushAll      int
 	pushErr      error
 }
 
@@ -72,8 +72,8 @@ func (f *fakeGit) RemoteURL(repoPath string) (string, error) {
 	return f.remoteURL, nil
 }
 
-func (f *fakeGit) Push(repoPath, branch string) error {
-	f.pushes = append(f.pushes, branch)
+func (f *fakeGit) PushAll(repoPath string) error {
+	f.pushAll++
 	return f.pushErr
 }
 
@@ -1171,7 +1171,7 @@ func TestSaveCommandCommitsDirtyWorktree(t *testing.T) {
 	}
 }
 
-func TestSaveCommandPushesBothBranches(t *testing.T) {
+func TestSaveCommandNeverPushes(t *testing.T) {
 	fake, cleanup := runInWorkspace(t)
 	defer cleanup()
 	createProject(t, fake, "my-blog")
@@ -1181,31 +1181,67 @@ func TestSaveCommandPushesBothBranches(t *testing.T) {
 		t.Fatalf("save my-blog: %v", err)
 	}
 
-	want := []string{"my-blog", "main"}
-	if !reflect.DeepEqual(fake.pushes, want) {
-		t.Errorf("pushes = %v, want %v", fake.pushes, want)
+	// Save is local-only: committing is its job, pushing is `grind push`'s.
+	if fake.pushAll != 0 {
+		t.Errorf("PushAll calls = %d, want 0", fake.pushAll)
 	}
 }
 
-func TestSaveCommandPushFailurePrintsWarning(t *testing.T) {
+func TestPushCommandNoRemote(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	_, err := execute(t, fake, "push")
+	if err == nil {
+		t.Fatal("push without a remote: expected error")
+	}
+	if !strings.Contains(err.Error(), "No remote configured") {
+		t.Errorf("error = %q, want no-remote message", err.Error())
+	}
+	if fake.pushAll != 0 {
+		t.Errorf("PushAll calls = %d, want 0", fake.pushAll)
+	}
+}
+
+func TestPushCommandHappyPath(t *testing.T) {
 	fake, cleanup := runInWorkspace(t)
 	defer cleanup()
 	createProject(t, fake, "my-blog")
+	fake.remoteURL = "git@example.com:repo.git"
+
+	out, err := execute(t, fake, "push")
+	if err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if fake.pushAll != 1 {
+		t.Errorf("PushAll calls = %d, want 1", fake.pushAll)
+	}
+	if !strings.Contains(out, "Pushed all branches to origin.") {
+		t.Errorf("output = %q", out)
+	}
+}
+
+func TestPushCommandFailureIsUserError(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
 	fake.remoteURL = "git@example.com:repo.git"
 	fake.pushErr = &git.PushError{
 		Stderr: "fatal: unable to access",
 		Err:    errors.New("push failed"),
 	}
 
-	readStderr := captureStderr(t)
-	_, err := execute(t, fake, "save", "my-blog")
-	out := readStderr()
-
-	if err != nil {
-		t.Fatalf("save my-blog: %v, want nil (best-effort push)", err)
+	_, err := execute(t, fake, "push")
+	if err == nil {
+		t.Fatal("push with failing remote: expected error")
 	}
-	if !strings.Contains(out, "Warning: could not push to remote: fatal: unable to access") {
-		t.Errorf("stderr = %q, want warning", out)
+	// A failed push is what the user asked for, so it is a real user error
+	// (exit 1) carrying git's stderr — not a silent warning.
+	var user *grinderr.User
+	if !errors.As(err, &user) {
+		t.Fatalf("error = %T, want *grinderr.User", err)
+	}
+	if !strings.Contains(err.Error(), "fatal: unable to access") {
+		t.Errorf("error = %q, want git's stderr", err.Error())
 	}
 }
 

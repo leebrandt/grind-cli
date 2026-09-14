@@ -9,8 +9,8 @@ import (
 )
 
 // newSaveCmd builds `grind save <project> [-t|--time <duration>]`, which
-// ends the project's active session (or backfills one), commits both
-// worktrees, and pushes both branches.
+// ends the project's active session (or backfills one) and commits both
+// worktrees. Saving is local-only — pushing is `grind push`'s job.
 func newSaveCmd(svc *projects.Service) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "save <project>",

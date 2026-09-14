@@ -174,7 +174,7 @@ func (f *fakeGit) CommitAll(worktreePath, message string) error { return nil }
 
 func (f *fakeGit) RemoteURL(repoPath string) (string, error) { return "", nil }
 
-func (f *fakeGit) Push(repoPath, branch string) error { return nil }
+func (f *fakeGit) PushAll(repoPath string) error { return nil }
 
 func TestInit(t *testing.T) {
 	dir := t.TempDir()

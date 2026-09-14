@@ -2,13 +2,11 @@ package projects
 
 import (
 	"errors"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/leebrandt/grind/internal/config"
-	"github.com/leebrandt/grind/internal/git"
 	"github.com/leebrandt/grind/internal/grinderr"
 	"github.com/leebrandt/grind/internal/workspace"
 )
@@ -38,28 +36,6 @@ func addProject(t *testing.T, ws *workspace.Workspace, name string, sessions ...
 // activeSession builds a session that is still running (End == nil).
 func activeSession(start time.Time) config.Session {
 	return config.Session{Start: start}
-}
-
-// captureStderr redirects os.Stderr to a temp file and returns a function
-// that restores it and returns everything written.
-func captureStderr(t *testing.T) func() string {
-	t.Helper()
-	old := os.Stderr
-	tmp, err := os.CreateTemp("", "grind-stderr-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	os.Stderr = tmp
-	return func() string {
-		tmp.Close()
-		os.Stderr = old
-		data, err := os.ReadFile(tmp.Name())
-		if err != nil {
-			t.Fatal(err)
-		}
-		os.Remove(tmp.Name())
-		return string(data)
-	}
 }
 
 func TestParseDuration(t *testing.T) {
@@ -424,9 +400,9 @@ func TestSaveCommitsDirtyWorktree(t *testing.T) {
 	if fake.commitAll[0].message != "Save on my-blog" {
 		t.Errorf("CommitAll message = %q", fake.commitAll[0].message)
 	}
-	// No remote → no pushes.
-	if len(fake.pushes) != 0 {
-		t.Errorf("pushes = %v, want none", fake.pushes)
+	// Save is local-only: it must never push.
+	if fake.pushAll != 0 {
+		t.Errorf("PushAll calls = %d, want 0", fake.pushAll)
 	}
 }
 
@@ -442,32 +418,8 @@ func TestSaveSkipsCleanWorktree(t *testing.T) {
 	if len(fake.commitAll) != 0 {
 		t.Errorf("CommitAll calls = %d, want 0", len(fake.commitAll))
 	}
-	if len(fake.pushes) != 0 {
-		t.Errorf("pushes = %v, want none", fake.pushes)
-	}
-}
-
-func TestSavePushesBothBranches(t *testing.T) {
-	ws := newTestWorkspace(t)
-	addProject(t, ws, "my-blog")
-	fake := newFakeGit()
-	fake.hasChanges = true
-	fake.remoteURL = "git@example.com:repo.git"
-	svc := NewService(fake)
-
-	session := &config.Session{Rounded: 7200}
-	if err := svc.Save(ws, "my-blog", session); err != nil {
-		t.Fatal(err)
-	}
-	if len(fake.commitAll) != 1 {
-		t.Fatalf("CommitAll calls = %d, want 1", len(fake.commitAll))
-	}
-	if fake.commitAll[0].message != "Work session on my-blog (2.00h)" {
-		t.Errorf("CommitAll message = %q", fake.commitAll[0].message)
-	}
-	wantPushes := []string{"my-blog", "main"}
-	if len(fake.pushes) != 2 || fake.pushes[0] != wantPushes[0] || fake.pushes[1] != wantPushes[1] {
-		t.Errorf("pushes = %v, want %v", fake.pushes, wantPushes)
+	if fake.pushAll != 0 {
+		t.Errorf("PushAll calls = %d, want 0", fake.pushAll)
 	}
 }
 
@@ -486,43 +438,26 @@ func TestSaveUsesConfiguredDefaultBranch(t *testing.T) {
 	if err := svc.Save(ws, "my-blog", nil); err != nil {
 		t.Fatal(err)
 	}
-	wantPushes := []string{"my-blog", "trunk"}
-	if len(fake.pushes) != 2 || fake.pushes[0] != wantPushes[0] || fake.pushes[1] != wantPushes[1] {
-		t.Errorf("pushes = %v, want %v", fake.pushes, wantPushes)
+	// Save never pushes, regardless of the configured default branch.
+	if fake.pushAll != 0 {
+		t.Errorf("PushAll calls = %d, want 0", fake.pushAll)
 	}
 }
 
-func TestSavePushFailureWarns(t *testing.T) {
+func TestSaveNeverPushes(t *testing.T) {
 	ws := newTestWorkspace(t)
 	addProject(t, ws, "my-blog")
 	fake := newFakeGit()
+	// Even with a remote configured and a push error armed, Save must not
+	// touch the remote — pushing is `grind push`'s job.
 	fake.remoteURL = "git@example.com:repo.git"
-	// A PushError carries git's stderr; Save prints it as a warning and
-	// keeps going because the work is saved locally.
-	fake.pushErr = &git.PushError{Stderr: "fatal: unable to access", Err: grinderr.NewSystem("git push origin my-blog: fatal: unable to access")}
-	svc := NewService(fake)
-
-	readStderr := captureStderr(t)
-	if err := svc.Save(ws, "my-blog", nil); err != nil {
-		t.Fatalf("Save() error = %v, want nil (push is best-effort)", err)
-	}
-	out := readStderr()
-	if !strings.Contains(out, "Warning: could not push to remote: fatal: unable to access") {
-		t.Errorf("stderr = %q, want push warning", out)
-	}
-}
-
-func TestSaveNonPushErrorIsFatal(t *testing.T) {
-	ws := newTestWorkspace(t)
-	addProject(t, ws, "my-blog")
-	fake := newFakeGit()
-	fake.remoteURL = "git@example.com:repo.git"
-	// A failure that is NOT a PushError is unexpected — the git layer broke
-	// in a way push failures do not — so it must surface as a real error.
 	fake.pushErr = grinderr.NewSystem("git exploded")
 	svc := NewService(fake)
 
-	if err := svc.Save(ws, "my-blog", nil); err == nil {
-		t.Fatal("Save() = nil error, want hard failure for non-PushError")
+	if err := svc.Save(ws, "my-blog", nil); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if fake.pushAll != 0 {
+		t.Errorf("PushAll calls = %d, want 0", fake.pushAll)
 	}
 }

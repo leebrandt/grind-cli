@@ -96,11 +96,14 @@ turns out wrong, raise it in conversation first.
 ### Push/pull (cross-machine sync)
 
 - `grind save` commits **both** worktrees — the project worktree (the work)
-  and the main worktree (the state) — then pushes **both** branches. v1 only
-  committed the main worktree, so the actual work never reached the remote.
-  That bug is the reason this rule exists.
-- `grind push` pushes all branches. `grind pull` fetches, fast-forwards, and
-  creates missing project worktrees.
+  and the main worktree (the state) — but NEVER pushes. Saving is local:
+  fast, offline-friendly, and the work is always committed. v1 only
+  committed the main worktree, so the actual work never reached the remote;
+  the rewrite fixes that by committing both worktrees.
+- `grind push` is the ONE verb that touches the remote: it pushes all
+  branches. A failed push is a real error (exit 1) — the user asked for it.
+- `grind pull` fetches, fast-forwards, and creates missing project
+  worktrees.
 
 ### Error handling
 
@@ -120,6 +123,7 @@ verb set, each verb means exactly one thing:
 | `show` | detail one | `show my-blog` |
 | `edit` | open in editor | `edit idea 3`, `edit my-blog` |
 | `work` / `save` | start / stop session | `work my-blog`, `save my-blog` |
+| `push` / `pull` | sync with remote | `grind push`, `grind pull` |
 | `reject` / `prune` | idea lifecycle | `reject idea 3`, `prune ideas` |
 | `publish` / `cancel` | project lifecycle | `publish my-blog`, `cancel my-blog` |
 | `read` | print to stdout | `read journal` |
@@ -158,7 +162,8 @@ Planned order (each is a spec in `specs/`):
 1. **Foundation + ideas** — `init`, `new idea`, `list ideas`, `edit idea`,
    `reject idea`, `prune ideas` ✅ current
 2. **Projects** — `new project`, `list projects`, `show`
-3. **Work/save** — sessions, commit both worktrees, push
+3. **Work/save** — sessions, commit both worktrees (local only; push is
+   explicit via `grind push`)
 4. **Tasks**
 5. **Journal**
 6. **Status**

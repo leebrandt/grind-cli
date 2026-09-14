@@ -497,7 +497,7 @@ func TestRemoteURL(t *testing.T) {
 	}
 }
 
-func TestPush(t *testing.T) {
+func TestPushAll(t *testing.T) {
 	bareRepo, main := newBareRepoWithMain(t)
 	g := New()
 
@@ -518,21 +518,37 @@ func TestPush(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := g.Push(bareRepo, "main"); err != nil {
-		t.Fatalf("Push() error = %v", err)
-	}
-
-	// The remote must now have the commit.
-	log, err := output(remote, "log", "--oneline", "-1")
-	if err != nil {
+	// A second branch (a project branch) must also reach the remote.
+	if err := g.CreateBranch(bareRepo, "my-blog"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(log, "Push me") {
-		t.Errorf("remote latest commit = %q, want %q", strings.TrimSpace(log), "Push me")
+	if err := g.AddWorktree(bareRepo, filepath.Join(filepath.Dir(bareRepo), "my-blog"), "my-blog"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(bareRepo), "my-blog", "work.md"), []byte("y\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.CommitAll(filepath.Join(filepath.Dir(bareRepo), "my-blog"), "Project work"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := g.PushAll(bareRepo); err != nil {
+		t.Fatalf("PushAll() error = %v", err)
+	}
+
+	// The remote must now have both branches.
+	for branch, want := range map[string]string{"main": "Push me", "my-blog": "Project work"} {
+		log, err := output(remote, "log", "--oneline", "-1", branch)
+		if err != nil {
+			t.Fatalf("remote log %s: %v", branch, err)
+		}
+		if !strings.Contains(log, want) {
+			t.Errorf("remote %s latest commit = %q, want %q", branch, strings.TrimSpace(log), want)
+		}
 	}
 }
 
-func TestPushFailureCarriesStderr(t *testing.T) {
+func TestPushAllFailureCarriesStderr(t *testing.T) {
 	bareRepo, _ := newBareRepoWithMain(t)
 	g := New()
 
@@ -541,13 +557,13 @@ func TestPushFailureCarriesStderr(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := g.Push(bareRepo, "main")
+	err := g.PushAll(bareRepo)
 	if err == nil {
-		t.Fatal("Push() = nil error, want failure against a missing remote")
+		t.Fatal("PushAll() = nil error, want failure against a missing remote")
 	}
 
-	// The error must be a PushError carrying git's stderr, so save can print
-	// a clean warning.
+	// The error must be a PushError carrying git's stderr, so push can
+	// print a clean message.
 	var pushErr *PushError
 	if !errors.As(err, &pushErr) {
 		t.Fatalf("error = %T, want *PushError", err)

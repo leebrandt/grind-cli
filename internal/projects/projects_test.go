@@ -27,7 +27,7 @@ type fakeGit struct {
 	commitErr       error
 	hasChanges      bool
 	remoteURL       string
-	pushes          []string
+	pushAll         int
 	pushErr         error
 }
 
@@ -84,8 +84,8 @@ func (f *fakeGit) RemoteURL(repoPath string) (string, error) {
 	return f.remoteURL, nil
 }
 
-func (f *fakeGit) Push(repoPath, branch string) error {
-	f.pushes = append(f.pushes, branch)
+func (f *fakeGit) PushAll(repoPath string) error {
+	f.pushAll++
 	return f.pushErr
 }
 

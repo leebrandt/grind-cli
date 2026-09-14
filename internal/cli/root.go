@@ -54,6 +54,7 @@ func NewRootCmd(g git.Git) *cobra.Command {
 	root.AddCommand(newShowCmd(projectsSvc))
 	root.AddCommand(newWorkCmd(projectsSvc))
 	root.AddCommand(newSaveCmd(projectsSvc))
+	root.AddCommand(newPushCmd(g))
 
 	return root
 }

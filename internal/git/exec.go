@@ -174,11 +174,11 @@ func (g *execGit) RemoteURL(repoPath string) (string, error) {
 	return out, nil
 }
 
-// Push runs `git push origin <branch>` in the bare repo. A failed push is
+// PushAll runs `git push origin --all` in the bare repo. A failed push is
 // not fatal — the work is committed locally — so the error carries git's
-// stderr for a warning instead of a hard failure.
-func (g *execGit) Push(repoPath, branch string) error {
-	_, stderr, err := outputFull(repoPath, "push", "origin", branch)
+// stderr for a clean message instead of a hard failure.
+func (g *execGit) PushAll(repoPath string) error {
+	_, stderr, err := outputFull(repoPath, "push", "origin", "--all")
 	if err == nil {
 		return nil
 	}
