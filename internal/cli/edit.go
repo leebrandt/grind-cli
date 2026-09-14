@@ -61,6 +61,7 @@ func newEditCmd(ideasSvc *ideas.Service, projectsSvc *projects.Service) *cobra.C
 			return editor.Open(filepath.Join(ws.IdeasDir(), idea.Filename))
 		},
 	})
+	edit.AddCommand(newEditJournalCmd())
 
 	return edit
 }
