@@ -131,6 +131,60 @@ func (g *execGit) Commit(worktreePath, message string, paths ...string) error {
 	return run(worktreePath, "commit", "-m", message)
 }
 
+// HasChanges reports whether the worktree has any changes, including
+// untracked files. `git status --porcelain` lists every change in a
+// machine-readable form; a non-empty output means the worktree is dirty.
+func (g *execGit) HasChanges(worktreePath string) (bool, error) {
+	out, err := output(worktreePath, "status", "--porcelain")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) != "", nil
+}
+
+// CommitAll stages every change in the worktree and commits it. This is the
+// ONE documented exception to the "never git add -A" rule: the rule protects
+// the MAIN worktree, where config and state files live. A project worktree
+// contains ONLY work product by construction (its branch starts at an empty
+// tree), so staging everything there IS "stage the specific files changed".
+// Like Commit, it refuses to run when the index has unmerged paths.
+func (g *execGit) CommitAll(worktreePath, message string) error {
+	unmerged, err := output(worktreePath, "ls-files", "-u")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(unmerged) != "" {
+		return grinderr.NewSystem("refusing to commit: unmerged paths exist")
+	}
+
+	if err := run(worktreePath, "add", "-A"); err != nil {
+		return err
+	}
+	return run(worktreePath, "commit", "-m", message)
+}
+
+// RemoteURL returns the origin remote URL, or "" when no remote is
+// configured. `git remote get-url origin` exits non-zero without a remote;
+// that is an empty result, not an error — save skips pushing silently.
+func (g *execGit) RemoteURL(repoPath string) (string, error) {
+	out, err := output(repoPath, "remote", "get-url", "origin")
+	if err != nil {
+		return "", nil
+	}
+	return out, nil
+}
+
+// Push runs `git push origin <branch>` in the bare repo. A failed push is
+// not fatal — the work is committed locally — so the error carries git's
+// stderr for a warning instead of a hard failure.
+func (g *execGit) Push(repoPath, branch string) error {
+	_, stderr, err := outputFull(repoPath, "push", "origin", branch)
+	if err == nil {
+		return nil
+	}
+	return &PushError{Stderr: stderr, Err: err}
+}
+
 // branchExists reports whether refs/heads/<branch> exists in repoPath.
 func branchExists(repoPath, branch string) (bool, error) {
 	_, err := output(repoPath, "show-ref", "--verify", "--quiet", "refs/heads/"+branch)
@@ -157,6 +211,13 @@ func run(dir string, args ...string) error {
 // output executes git in dir and returns its trimmed stdout. Like run, it
 // captures stderr and includes it in the error on failure.
 func output(dir string, args ...string) (string, error) {
+	stdout, _, err := outputFull(dir, args...)
+	return stdout, err
+}
+
+// outputFull executes git in dir and returns trimmed stdout and stderr.
+// Push uses the stderr to build a warning when the remote is unreachable.
+func outputFull(dir string, args ...string) (string, string, error) {
 	cmd := exec.Command("git", withDir(dir, args)...)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -166,9 +227,9 @@ func output(dir string, args ...string) (string, error) {
 		if msg == "" {
 			msg = err.Error()
 		}
-		return "", grinderr.WrapSystem(err, "git %s: %s", strings.Join(args, " "), msg)
+		return "", strings.TrimSpace(stderr.String()), grinderr.WrapSystem(err, "git %s: %s", strings.Join(args, " "), msg)
 	}
-	return strings.TrimSpace(stdout.String()), nil
+	return strings.TrimSpace(stdout.String()), strings.TrimSpace(stderr.String()), nil
 }
 
 // withDir prefixes args with -C dir when dir is non-empty, so the command

@@ -2,10 +2,14 @@ package cli
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/leebrandt/grind/internal/config"
 	"github.com/leebrandt/grind/internal/git"
@@ -18,6 +22,11 @@ type fakeGit struct {
 	commits      []fakeCommit
 	createBranch []string
 	dirtyPaths   map[string]bool
+	hasChanges   bool
+	commitAll    []fakeCommit
+	remoteURL    string
+	pushes       []string
+	pushErr      error
 }
 
 type fakeCommit struct {
@@ -44,6 +53,24 @@ func (f *fakeGit) IsPathClean(worktreePath, path string) (bool, error) {
 func (f *fakeGit) CreateBranch(repoPath, branch string) error {
 	f.createBranch = append(f.createBranch, branch)
 	return nil
+}
+
+func (f *fakeGit) HasChanges(worktreePath string) (bool, error) {
+	return f.hasChanges, nil
+}
+
+func (f *fakeGit) CommitAll(worktreePath, message string) error {
+	f.commitAll = append(f.commitAll, fakeCommit{worktree: worktreePath, message: message})
+	return nil
+}
+
+func (f *fakeGit) RemoteURL(repoPath string) (string, error) {
+	return f.remoteURL, nil
+}
+
+func (f *fakeGit) Push(repoPath, branch string) error {
+	f.pushes = append(f.pushes, branch)
+	return f.pushErr
 }
 
 // runInWorkspace creates a workspace in a temp dir, chdirs into it, and
@@ -310,8 +337,8 @@ func TestVersionFlag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "0.90.0\n" {
-		t.Errorf("output = %q, want %q", out, "0.90.0\n")
+	if out != "0.90.1\n" {
+		t.Errorf("output = %q, want %q", out, "0.90.1\n")
 	}
 }
 
@@ -728,6 +755,425 @@ func TestNewProjectNotInWorkspace(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Not in a grind workspace.") {
 		t.Errorf("error = %q", err.Error())
+	}
+}
+
+// captureStderr redirects os.Stderr to a pipe and returns a function that
+// restores it and returns everything written. Needed for commands that print
+// warnings directly to stderr (save's best-effort push warning).
+func captureStderr(t *testing.T) func() string {
+	t.Helper()
+	old := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stderr = w
+	return func() string {
+		w.Close()
+		os.Stderr = old
+		var buf bytes.Buffer
+		if _, err := io.Copy(&buf, r); err != nil {
+			t.Fatal(err)
+		}
+		return buf.String()
+	}
+}
+
+// recordingEditor writes a script that appends its arguments to logFile and
+// sets $EDITOR to it, so tests can verify which path the editor received.
+func recordingEditor(t *testing.T) string {
+	t.Helper()
+	logFile := filepath.Join(t.TempDir(), "editor-args.txt")
+	script := filepath.Join(t.TempDir(), "editor.sh")
+	content := "#!/bin/sh\necho \"$@\" >> " + logFile + "\n"
+	if err := os.WriteFile(script, []byte(content), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("EDITOR", script)
+	return logFile
+}
+
+// createProject promotes the first idea into a project named name.
+func createProject(t *testing.T, fake *fakeGit, name string) {
+	t.Helper()
+	if _, err := execute(t, fake, "new", "idea", "My Blog"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := execute(t, fake, "new", "project", name, "0", "-t", "blog"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEditProjectOpensEditorWithoutSession(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+
+	logFile := recordingEditor(t)
+	if _, err := execute(t, fake, "edit", "my-blog"); err != nil {
+		t.Fatalf("edit my-blog: %v", err)
+	}
+
+	// The editor must have been called with the project worktree path.
+	data, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cwd, _ := os.Getwd()
+	wantPath := filepath.Join(cwd, "my-blog")
+	if strings.TrimSpace(string(data)) != wantPath {
+		t.Errorf("editor arg = %q, want %q", strings.TrimSpace(string(data)), wantPath)
+	}
+
+	// No session may be started and nothing may be committed.
+	projects, err := config.ReadProjects(filepath.Join(".main", ".projects.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projects.Projects["my-blog"].Sessions) != 0 {
+		t.Error("edit must not start a session")
+	}
+	for _, c := range fake.commits {
+		if strings.Contains(c.message, "Start session") {
+			t.Errorf("unexpected commit: %q", c.message)
+		}
+	}
+}
+
+func TestEditUnknownProject(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	_, err := execute(t, fake, "edit", "nope")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if err.Error() != "Project 'nope' not found." {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestEditIdeaCommandStillWorks(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	if _, err := execute(t, fake, "new", "idea", "My Idea"); err != nil {
+		t.Fatal(err)
+	}
+
+	logFile := recordingEditor(t)
+	if _, err := execute(t, fake, "edit", "idea", "0"); err != nil {
+		t.Fatalf("edit idea 0: %v", err)
+	}
+
+	data, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), ".main/ideas/") {
+		t.Errorf("editor arg = %q, want an idea file path", strings.TrimSpace(string(data)))
+	}
+}
+
+func TestWorkCommandStartAndContinue(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+	t.Setenv("EDITOR", "true")
+
+	out, err := execute(t, fake, "work", "my-blog")
+	if err != nil {
+		t.Fatalf("work my-blog: %v", err)
+	}
+	if !strings.Contains(out, "Started work session on 'my-blog'") {
+		t.Errorf("output = %q", out)
+	}
+	if !strings.Contains(out, "Time started:") {
+		t.Errorf("output = %q", out)
+	}
+
+	// .projects.json must have one active session.
+	projects, err := config.ReadProjects(filepath.Join(".main", ".projects.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions := projects.Projects["my-blog"].Sessions
+	if len(sessions) != 1 {
+		t.Fatalf("sessions = %d, want 1", len(sessions))
+	}
+	if sessions[0].End != nil {
+		t.Error("session should be active")
+	}
+
+	// The last commit must be the start-session commit.
+	last := fake.commits[len(fake.commits)-1]
+	if last.message != "Start session on my-blog" {
+		t.Errorf("last commit = %q", last.message)
+	}
+
+	// Running work again continues the session without a second one.
+	out, err = execute(t, fake, "work", "my-blog")
+	if err != nil {
+		t.Fatalf("work my-blog (second): %v", err)
+	}
+	if !strings.Contains(out, "Continuing session on 'my-blog'") {
+		t.Errorf("output = %q", out)
+	}
+
+	projects, err = config.ReadProjects(filepath.Join(".main", ".projects.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projects.Projects["my-blog"].Sessions) != 1 {
+		t.Errorf("sessions = %d, want still 1", len(projects.Projects["my-blog"].Sessions))
+	}
+}
+
+func TestWorkCommandOpensEditorOnProjectWorktree(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+
+	logFile := recordingEditor(t)
+	if _, err := execute(t, fake, "work", "my-blog"); err != nil {
+		t.Fatalf("work my-blog: %v", err)
+	}
+
+	data, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cwd, _ := os.Getwd()
+	wantPath := filepath.Join(cwd, "my-blog")
+	if strings.TrimSpace(string(data)) != wantPath {
+		t.Errorf("editor arg = %q, want %q", strings.TrimSpace(string(data)), wantPath)
+	}
+}
+
+func TestWorkCommandUnknownProject(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	_, err := execute(t, fake, "work", "nope")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if err.Error() != "Project 'nope' does not exist." {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestSaveCommandHappyPath(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+	t.Setenv("EDITOR", "true")
+
+	if _, err := execute(t, fake, "work", "my-blog"); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := execute(t, fake, "save", "my-blog")
+	if err != nil {
+		t.Fatalf("save my-blog: %v", err)
+	}
+	if !strings.Contains(out, "Stopped work session on 'my-blog'") {
+		t.Errorf("output = %q", out)
+	}
+	if !strings.Contains(out, "Duration:") {
+		t.Errorf("output = %q", out)
+	}
+
+	// The session must be ended in .projects.json.
+	projects, err := config.ReadProjects(filepath.Join(".main", ".projects.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := projects.Projects["my-blog"].Sessions[0]
+	if session.End == nil {
+		t.Error("session still active after save")
+	}
+
+	// The last commit must be the save-session commit.
+	last := fake.commits[len(fake.commits)-1]
+	if last.message != "Save session on my-blog" {
+		t.Errorf("last commit = %q", last.message)
+	}
+}
+
+func TestSaveCommandBackfillActiveSession(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+	t.Setenv("EDITOR", "true")
+
+	if _, err := execute(t, fake, "work", "my-blog"); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := execute(t, fake, "save", "my-blog", "-t", "8h")
+	if err != nil {
+		t.Fatalf("save my-blog -t 8h: %v", err)
+	}
+	if !strings.Contains(out, "Stopped work session on 'my-blog'") {
+		t.Errorf("output = %q", out)
+	}
+	if !strings.Contains(out, "Duration: 8.00 hours (8.00 hours rounded)") {
+		t.Errorf("output = %q", out)
+	}
+
+	projects, err := config.ReadProjects(filepath.Join(".main", ".projects.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := projects.Projects["my-blog"].Sessions[0]
+	if session.End == nil {
+		t.Fatal("session still active")
+	}
+	wantEnd := session.Start.Add(8 * time.Hour)
+	if !session.End.Equal(wantEnd) {
+		t.Errorf("End = %v, want %v", session.End, wantEnd)
+	}
+	if session.Duration != 8*3600 {
+		t.Errorf("Duration = %d, want %d", session.Duration, 8*3600)
+	}
+}
+
+func TestSaveCommandBackfillNoSession(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+
+	out, err := execute(t, fake, "save", "my-blog", "-t", "8h")
+	if err != nil {
+		t.Fatalf("save my-blog -t 8h: %v", err)
+	}
+	if !strings.Contains(out, "Backfilled 8h on 'my-blog'") {
+		t.Errorf("output = %q", out)
+	}
+	if !strings.Contains(out, "Duration: 8.00 hours (8.00 hours rounded)") {
+		t.Errorf("output = %q", out)
+	}
+
+	projects, err := config.ReadProjects(filepath.Join(".main", ".projects.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions := projects.Projects["my-blog"].Sessions
+	if len(sessions) != 1 {
+		t.Fatalf("sessions = %d, want 1", len(sessions))
+	}
+	if sessions[0].End == nil {
+		t.Fatal("backfilled session should be ended")
+	}
+	if sessions[0].Duration != 8*3600 {
+		t.Errorf("Duration = %d, want %d", sessions[0].Duration, 8*3600)
+	}
+}
+
+func TestSaveCommandInvalidDuration(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+
+	_, err := execute(t, fake, "save", "my-blog", "-t", "banana")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	want := "Backfill time must be a positive duration (e.g. 5, 5h, 1h30m, 90m). Got 'banana'."
+	if err.Error() != want {
+		t.Errorf("error = %q, want %q", err.Error(), want)
+	}
+}
+
+func TestSaveCommandUnknownProject(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	_, err := execute(t, fake, "save", "nope")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if err.Error() != "Project 'nope' does not exist." {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestSaveCommandNoActiveSession(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+
+	out, err := execute(t, fake, "save", "my-blog")
+	if err != nil {
+		t.Fatalf("save my-blog: %v", err)
+	}
+	if !strings.Contains(out, "No active session on 'my-blog'.") {
+		t.Errorf("output = %q", out)
+	}
+
+	// No save-session commit should have happened.
+	for _, c := range fake.commits {
+		if strings.Contains(c.message, "Save session") {
+			t.Errorf("unexpected commit: %q", c.message)
+		}
+	}
+}
+
+func TestSaveCommandCommitsDirtyWorktree(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+	fake.hasChanges = true
+
+	if _, err := execute(t, fake, "save", "my-blog"); err != nil {
+		t.Fatalf("save my-blog: %v", err)
+	}
+
+	if len(fake.commitAll) != 1 {
+		t.Fatalf("CommitAll calls = %d, want 1", len(fake.commitAll))
+	}
+	if fake.commitAll[0].message != "Save on my-blog" {
+		t.Errorf("CommitAll message = %q", fake.commitAll[0].message)
+	}
+}
+
+func TestSaveCommandPushesBothBranches(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+	fake.remoteURL = "git@example.com:repo.git"
+
+	if _, err := execute(t, fake, "save", "my-blog"); err != nil {
+		t.Fatalf("save my-blog: %v", err)
+	}
+
+	want := []string{"my-blog", "main"}
+	if !reflect.DeepEqual(fake.pushes, want) {
+		t.Errorf("pushes = %v, want %v", fake.pushes, want)
+	}
+}
+
+func TestSaveCommandPushFailurePrintsWarning(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+	fake.remoteURL = "git@example.com:repo.git"
+	fake.pushErr = &git.PushError{
+		Stderr: "fatal: unable to access",
+		Err:    errors.New("push failed"),
+	}
+
+	readStderr := captureStderr(t)
+	_, err := execute(t, fake, "save", "my-blog")
+	out := readStderr()
+
+	if err != nil {
+		t.Fatalf("save my-blog: %v, want nil (best-effort push)", err)
+	}
+	if !strings.Contains(out, "Warning: could not push to remote: fatal: unable to access") {
+		t.Errorf("stderr = %q, want warning", out)
 	}
 }
 

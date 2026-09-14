@@ -5,16 +5,36 @@ import (
 
 	"github.com/leebrandt/grind/internal/editor"
 	"github.com/leebrandt/grind/internal/ideas"
+	"github.com/leebrandt/grind/internal/projects"
 	"github.com/leebrandt/grind/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
-// newEditCmd builds the `edit` command group. This slice only has
-// `edit idea`.
-func newEditCmd(svc *ideas.Service) *cobra.Command {
+// newEditCmd builds the `edit` command group. The parent command edits a
+// project worktree directory; the `idea` subcommand edits an idea file.
+// Cobra runs the parent when the first argument is not a subcommand, so
+// `edit my-blog` resolves the project while `edit idea 3` still dispatches
+// to the subcommand. A project literally named "idea" is shadowed by the
+// subcommand — an acceptable edge case.
+func newEditCmd(ideasSvc *ideas.Service, projectsSvc *projects.Service) *cobra.Command {
 	edit := &cobra.Command{
 		Use:   "edit",
 		Short: "Edit something",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ws, err := workspace.Require(".")
+			if err != nil {
+				return err
+			}
+			entry, err := projectsSvc.Get(ws, args[0])
+			if err != nil {
+				return err
+			}
+
+			// The project worktree is work product, so leaving it dirty is
+			// fine (that is the point of editing); nothing is committed.
+			return editor.Open(ws.ProjectWorktreePath(entry.Name))
+		},
 	}
 
 	edit.AddCommand(&cobra.Command{
@@ -30,7 +50,7 @@ func newEditCmd(svc *ideas.Service) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			idea, err := svc.Resolve(ws, n)
+			idea, err := ideasSvc.Resolve(ws, n)
 			if err != nil {
 				return err
 			}

@@ -19,11 +19,16 @@ import (
 type fakeGit struct {
 	calls           []string
 	commits         []fakeCommit
+	commitAll       []fakeCommit
 	createBranch    []string
 	addWorktree     [][]string
 	dirtyPaths      map[string]bool
 	createBranchErr error
 	commitErr       error
+	hasChanges      bool
+	remoteURL       string
+	pushes          []string
+	pushErr         error
 }
 
 type fakeCommit struct {
@@ -62,6 +67,24 @@ func (f *fakeGit) CreateBranch(repoPath, branch string) error {
 	f.calls = append(f.calls, "CreateBranch:"+branch)
 	f.createBranch = append(f.createBranch, branch)
 	return f.createBranchErr
+}
+
+func (f *fakeGit) HasChanges(worktreePath string) (bool, error) {
+	return f.hasChanges, nil
+}
+
+func (f *fakeGit) CommitAll(worktreePath, message string) error {
+	f.commitAll = append(f.commitAll, fakeCommit{worktree: worktreePath, message: message})
+	return nil
+}
+
+func (f *fakeGit) RemoteURL(repoPath string) (string, error) {
+	return f.remoteURL, nil
+}
+
+func (f *fakeGit) Push(repoPath, branch string) error {
+	f.pushes = append(f.pushes, branch)
+	return f.pushErr
 }
 
 // newTestWorkspace builds a workspace with config files and an ideas dir,

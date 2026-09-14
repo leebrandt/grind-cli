@@ -90,6 +90,19 @@ type ProjectEntry struct {
 	Idea      string       `json:"idea"`
 	Billing   BillingEntry `json:"billing"`
 	CreatedAt time.Time    `json:"createdAt"`
+	Sessions  []Session    `json:"sessions,omitempty"`
+}
+
+// Session is one work session on a project. Start is set when the session
+// begins; End stays nil while the session is active. Duration and Rounded
+// are in seconds and are written when the session ends — storing the rounded
+// value at end time freezes the billing math, so a later change to roundTo
+// never rewrites history.
+type Session struct {
+	Start    time.Time  `json:"start"`
+	End      *time.Time `json:"end,omitempty"`
+	Duration int64      `json:"duration,omitempty"`
+	Rounded  int64      `json:"rounded,omitempty"`
 }
 
 // BillingEntry is the per-project billing block. Each project carries its

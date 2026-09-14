@@ -35,7 +35,38 @@ type Git interface {
 	// contains only the actual work product, never grind's state files. It
 	// errors when the branch already exists.
 	CreateBranch(repoPath, branch string) error
+	// HasChanges reports whether the worktree has any changes, including
+	// untracked files. `save` uses it to decide whether the project worktree
+	// needs a commit.
+	HasChanges(worktreePath string) (bool, error)
+	// CommitAll stages every change in the worktree and commits it. This is
+	// the ONE documented exception to the "never git add -A" rule: the rule
+	// protects the MAIN worktree, where config and state files live. A
+	// project worktree contains only work product by construction, so
+	// staging everything there IS "stage the specific files changed".
+	CommitAll(worktreePath, message string) error
+	// RemoteURL returns the origin remote URL, or "" when no remote is
+	// configured. `save` uses it to decide whether pushing is possible.
+	RemoteURL(repoPath string) (string, error)
+	// Push runs `git push origin <branch>` in the bare repo. A failed push
+	// is not fatal — the work is committed locally — so the error carries
+	// git's stderr for a warning instead of a hard failure.
+	Push(repoPath, branch string) error
 }
+
+// PushError is returned by Push when git push fails. It carries git's
+// stderr so callers can print a warning without treating the failure as
+// fatal: the work is saved locally, the remote is best-effort.
+type PushError struct {
+	Stderr string
+	Err    error
+}
+
+// Error implements the error interface.
+func (e *PushError) Error() string { return e.Err.Error() }
+
+// Unwrap lets errors.As see through to the underlying git error.
+func (e *PushError) Unwrap() error { return e.Err }
 
 // New returns the production implementation backed by os/exec.
 func New() Git {

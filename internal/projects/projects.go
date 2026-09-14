@@ -200,6 +200,14 @@ func (s *Service) Get(ws *workspace.Workspace, name string) (*config.ProjectEntr
 	return &entry, nil
 }
 
+// Require returns one project, or a user error when it does not exist. It
+// differs from Get only in the error wording: work and save say "does not
+// exist" while edit and show say "not found".
+func (s *Service) Require(ws *workspace.Workspace, name string) (*config.ProjectEntry, error) {
+	_, entry, err := loadProject(ws, name)
+	return &entry, err
+}
+
 // validateName checks the project name rules from the spec. The name IS the
 // git branch name, so most rules are git's own check-ref-format rules.
 func validateName(name string) error {
