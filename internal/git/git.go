@@ -26,11 +26,10 @@ type Git interface {
 	// commits them with message. It refuses to commit when no paths are
 	// given or when unmerged paths exist.
 	Commit(worktreePath, message string, paths ...string) error
-	// IsClean reports whether the worktree has no uncommitted changes,
-	// including untracked files. The main worktree must be clean before any
-	// command that commits state, so unrelated edits are never swept into a
-	// commit.
-	IsClean(worktreePath string) (bool, error)
+	// IsPathClean reports whether the given path in worktreePath has no
+	// changes. Unlike a full-worktree check, it ignores everything else, so
+	// a dirty idea file does not block project creation.
+	IsPathClean(worktreePath, path string) (bool, error)
 	// CreateBranch creates a branch pointing at an empty-tree commit in the
 	// bare repo. Project branches start from an empty tree so the worktree
 	// contains only the actual work product, never grind's state files. It

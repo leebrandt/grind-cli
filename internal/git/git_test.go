@@ -187,7 +187,7 @@ func TestCommitRefusesUnmergedPaths(t *testing.T) {
 	}
 }
 
-func TestIsClean(t *testing.T) {
+func TestIsPathClean(t *testing.T) {
 	setGitIdentity(t)
 	root := t.TempDir()
 	g := New()
@@ -204,50 +204,60 @@ func TestIsClean(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// A freshly added worktree is clean.
-	clean, err := g.IsClean(main)
+	// A tracked file with no changes is clean.
+	file := filepath.Join(main, "state.json")
+	if err := os.WriteFile(file, []byte("v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Commit(main, "Add state.json", "state.json"); err != nil {
+		t.Fatal(err)
+	}
+	clean, err := g.IsPathClean(main, "state.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !clean {
-		t.Error("IsClean = false, want true for empty worktree")
+		t.Error("IsPathClean = false, want true for unchanged file")
 	}
 
-	// A modified tracked file makes it dirty.
-	file := filepath.Join(main, "dirty.txt")
-	if err := os.WriteFile(file, []byte("v1\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := g.Commit(main, "Add dirty.txt", "dirty.txt"); err != nil {
-		t.Fatal(err)
-	}
+	// A modified file is dirty for its own path...
 	if err := os.WriteFile(file, []byte("v2\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	clean, err = g.IsClean(main)
+	clean, err = g.IsPathClean(main, "state.json")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if clean {
-		t.Error("IsClean = true, want false for modified file")
+		t.Error("IsPathClean = true, want false for modified file")
 	}
 
-	// An untracked file also makes it dirty.
-	if err := os.Remove(file); err != nil {
+	// ...but a second, untouched file stays clean while the first is dirty.
+	other := filepath.Join(main, "other.txt")
+	if err := os.WriteFile(other, []byte("x\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.Commit(main, "Remove dirty.txt", "dirty.txt"); err != nil {
+	if err := g.Commit(main, "Add other.txt", "other.txt"); err != nil {
 		t.Fatal(err)
 	}
+	clean, err = g.IsPathClean(main, "other.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !clean {
+		t.Error("IsPathClean = false for untouched file while another is dirty")
+	}
+
+	// An untracked file is dirty for its own path.
 	if err := os.WriteFile(filepath.Join(main, "untracked.txt"), []byte("new\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	clean, err = g.IsClean(main)
+	clean, err = g.IsPathClean(main, "untracked.txt")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if clean {
-		t.Error("IsClean = true, want false for untracked file")
+		t.Error("IsPathClean = true, want false for untracked file")
 	}
 }
 

@@ -17,7 +17,7 @@ import (
 type fakeGit struct {
 	commits      []fakeCommit
 	createBranch []string
-	isClean      bool
+	dirtyPaths   map[string]bool
 }
 
 type fakeCommit struct {
@@ -37,7 +37,9 @@ func (f *fakeGit) Commit(worktreePath, message string, paths ...string) error {
 	return nil
 }
 
-func (f *fakeGit) IsClean(worktreePath string) (bool, error) { return f.isClean, nil }
+func (f *fakeGit) IsPathClean(worktreePath, path string) (bool, error) {
+	return !f.dirtyPaths[path], nil
+}
 
 func (f *fakeGit) CreateBranch(repoPath, branch string) error {
 	f.createBranch = append(f.createBranch, branch)
@@ -50,7 +52,7 @@ func (f *fakeGit) CreateBranch(repoPath, branch string) error {
 func runInWorkspace(t *testing.T) (*fakeGit, func()) {
 	t.Helper()
 	dir := t.TempDir()
-	fake := &fakeGit{isClean: true}
+	fake := &fakeGit{}
 	if err := workspace.Init(fake, dir); err != nil {
 		t.Fatalf("workspace.Init: %v", err)
 	}
@@ -300,6 +302,16 @@ func TestParseIdeaNumber(t *testing.T) {
 	}
 	if _, err := parseIdeaNumber("abc"); err == nil {
 		t.Error("expected error for non-numeric input")
+	}
+}
+
+func TestVersionFlag(t *testing.T) {
+	out, err := execute(t, &fakeGit{}, "--version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "0.90.0\n" {
+		t.Errorf("output = %q, want %q", out, "0.90.0\n")
 	}
 }
 
@@ -583,21 +595,53 @@ func TestShowUnknownProject(t *testing.T) {
 	}
 }
 
-func TestNewProjectDirtyMain(t *testing.T) {
+func TestNewProjectDirtyProjectsFile(t *testing.T) {
 	fake, cleanup := runInWorkspace(t)
 	defer cleanup()
 
 	if _, err := execute(t, fake, "new", "idea", "My Blog"); err != nil {
 		t.Fatal(err)
 	}
-	fake.isClean = false
+	fake.dirtyPaths = map[string]bool{".projects.json": true}
 
 	_, err := execute(t, fake, "new", "project", "my-blog", "0")
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if !strings.Contains(err.Error(), "You have uncommitted changes in .main.") {
+	if !strings.Contains(err.Error(), "You have uncommitted changes in .projects.json.") {
 		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestNewProjectDirtyIdeaFileStillWorks(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	if _, err := execute(t, fake, "new", "idea", "My Blog"); err != nil {
+		t.Fatal(err)
+	}
+	// A dirty idea file (e.g. from `edit idea`) must not block promotion.
+	entries, err := os.ReadDir(filepath.Join(".main", "ideas"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var filename string
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".md") {
+			filename = e.Name()
+		}
+	}
+	if filename == "" {
+		t.Fatal("no idea file found")
+	}
+	fake.dirtyPaths = map[string]bool{"ideas/" + filename: true}
+
+	out, err := execute(t, fake, "new", "project", "my-blog", "0", "-t", "blog")
+	if err != nil {
+		t.Fatalf("new project with dirty idea file: %v", err)
+	}
+	if !strings.Contains(out, "Created project: my-blog") {
+		t.Errorf("output = %q", out)
 	}
 }
 

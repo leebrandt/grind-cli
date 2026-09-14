@@ -34,7 +34,7 @@ func (f *fakeGit) Commit(worktreePath, message string, paths ...string) error {
 	return nil
 }
 
-func (f *fakeGit) IsClean(worktreePath string) (bool, error) { return true, nil }
+func (f *fakeGit) IsPathClean(worktreePath, path string) (bool, error) { return true, nil }
 
 func (f *fakeGit) CreateBranch(repoPath, branch string) error { return nil }
 

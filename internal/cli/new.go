@@ -67,11 +67,11 @@ func newProjectCmd(ideasSvc *ideas.Service, projectsSvc *projects.Service) *cobr
 				return err
 			}
 
-			// The dirty-main check comes before idea resolution so a dirty
-			// workspace is reported even when the idea number is also bad
-			// (spec flow step 2 before step 3). Create checks again
-			// defensively for direct callers of the service.
-			if err := projectsSvc.EnsureClean(ws); err != nil {
+			// The .projects.json check comes before idea resolution so a
+			// dirty state file is reported even when the idea number is
+			// also bad (spec flow step 2 before step 3). Create checks
+			// again defensively for direct callers of the service.
+			if err := projectsSvc.EnsureProjectsClean(ws); err != nil {
 				return err
 			}
 

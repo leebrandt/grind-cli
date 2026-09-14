@@ -14,6 +14,10 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// version is the grind release version. Bump the patch number at the end of
+// each slice so `grind -v` tells you which build you are testing.
+const version = "0.90.0"
+
 // NewRootCmd builds the complete grind command tree. The git implementation
 // is injected so tests can substitute a fake.
 func NewRootCmd(g git.Git) *cobra.Command {
@@ -21,8 +25,9 @@ func NewRootCmd(g git.Git) *cobra.Command {
 	projectsSvc := projects.NewService(g)
 
 	root := &cobra.Command{
-		Use:   "grind",
-		Short: "CLI tool for managing creative/technical projects from idea to publication",
+		Use:     "grind",
+		Short:   "CLI tool for managing creative/technical projects from idea to publication",
+		Version: version,
 		// main() prints errors and maps them to exit codes, so cobra should
 		// stay quiet and let us control the output.
 		SilenceUsage:  true,
@@ -34,6 +39,9 @@ func NewRootCmd(g git.Git) *cobra.Command {
 			HiddenDefaultCmd: true,
 		},
 	}
+	// Print just the version number (no "grind version" prefix) so scripts
+	// can parse it and the user can eyeball it.
+	root.SetVersionTemplate("{{.Version}}\n")
 
 	root.AddCommand(newInitCmd(g))
 	root.AddCommand(newNewCmd(ideasSvc, projectsSvc))

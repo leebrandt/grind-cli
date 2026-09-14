@@ -38,16 +38,18 @@ func NewService(g git.Git) *Service {
 	return &Service{Git: g}
 }
 
-// EnsureClean fails with a user error when the main worktree has
-// uncommitted changes. The CLI calls it before resolving the idea number so
-// the dirty check happens first, matching the spec's command flow.
-func (s *Service) EnsureClean(ws *workspace.Workspace) error {
-	clean, err := s.Git.IsClean(ws.MainWorktree)
+// EnsureProjectsClean fails with a user error when .projects.json has
+// uncommitted changes. Only this file blocks project creation: it is the
+// one file Create overwrites, so a hand-edited version would be clobbered
+// by the atomic write. A dirty idea file is fine — its content is captured
+// into .projects.json before the file is deleted.
+func (s *Service) EnsureProjectsClean(ws *workspace.Workspace) error {
+	clean, err := s.Git.IsPathClean(ws.MainWorktree, ".projects.json")
 	if err != nil {
 		return err
 	}
 	if !clean {
-		return grinderr.NewUser("You have uncommitted changes in .main. Commit or discard them first.")
+		return grinderr.NewUser("You have uncommitted changes in .projects.json. Commit or discard them first.")
 	}
 	return nil
 }
@@ -64,10 +66,12 @@ func (s *Service) EnsureClean(ws *workspace.Workspace) error {
 // fails after the worktree was created, the worktree is left in place and
 // the error notes how to remove it.
 func (s *Service) Create(ws *workspace.Workspace, name, projectType, ideaFilename string) (*config.ProjectEntry, error) {
-	// Fail fast on a dirty main worktree. A leftover `edit idea` or any
-	// other uncommitted change would otherwise be swept into the
-	// project-creation commits — a real v1 bug.
-	if err := s.EnsureClean(ws); err != nil {
+	// Fail fast when .projects.json is dirty. Create overwrites it, so a
+	// hand-edited version would be silently replaced. Everything else in
+	// .main is left alone — Commit stages only the specific paths it is
+	// given, so unrelated edits can never be swept into the
+	// project-creation commits (the v1 bug this design avoids).
+	if err := s.EnsureProjectsClean(ws); err != nil {
 		return nil, err
 	}
 

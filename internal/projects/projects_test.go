@@ -21,7 +21,7 @@ type fakeGit struct {
 	commits         []fakeCommit
 	createBranch    []string
 	addWorktree     [][]string
-	isClean         bool
+	dirtyPaths      map[string]bool
 	createBranchErr error
 	commitErr       error
 }
@@ -33,7 +33,7 @@ type fakeCommit struct {
 }
 
 func newFakeGit() *fakeGit {
-	return &fakeGit{isClean: true}
+	return &fakeGit{}
 }
 
 func (f *fakeGit) InitBare(path string) error { return nil }
@@ -54,7 +54,9 @@ func (f *fakeGit) Commit(worktreePath, message string, paths ...string) error {
 	return nil
 }
 
-func (f *fakeGit) IsClean(worktreePath string) (bool, error) { return f.isClean, nil }
+func (f *fakeGit) IsPathClean(worktreePath, path string) (bool, error) {
+	return !f.dirtyPaths[path], nil
+}
 
 func (f *fakeGit) CreateBranch(repoPath, branch string) error {
 	f.calls = append(f.calls, "CreateBranch:"+branch)
@@ -251,11 +253,11 @@ func TestCreateWithoutType(t *testing.T) {
 	}
 }
 
-func TestCreateFailsFastOnDirtyMain(t *testing.T) {
+func TestCreateFailsFastOnDirtyProjectsFile(t *testing.T) {
 	ws := newTestWorkspace(t)
 	writeIdea(t, ws, "20260101000000.md", "# My Blog\n")
 	fake := newFakeGit()
-	fake.isClean = false
+	fake.dirtyPaths = map[string]bool{".projects.json": true}
 	svc := NewService(fake)
 
 	_, err := svc.Create(ws, "my-blog", "blog", "20260101000000.md")
@@ -266,12 +268,34 @@ func TestCreateFailsFastOnDirtyMain(t *testing.T) {
 	if !errors.As(err, &user) {
 		t.Fatalf("expected *grinderr.User, got %T", err)
 	}
-	want := "You have uncommitted changes in .main. Commit or discard them first."
+	want := "You have uncommitted changes in .projects.json. Commit or discard them first."
 	if err.Error() != want {
 		t.Errorf("message = %q, want %q", err.Error(), want)
 	}
 	if len(fake.calls) != 0 {
 		t.Errorf("git calls = %v, want none", fake.calls)
+	}
+}
+
+func TestCreateIgnoresDirtyIdeaFile(t *testing.T) {
+	ws := newTestWorkspace(t)
+	writeIdea(t, ws, "20260101000000.md", "# My Blog\n")
+	fake := newFakeGit()
+	// A dirty idea file (e.g. from `edit idea`) must not block promotion:
+	// its content is captured into .projects.json before the file is
+	// deleted.
+	fake.dirtyPaths = map[string]bool{"ideas/20260101000000.md": true}
+	svc := NewService(fake)
+
+	entry, err := svc.Create(ws, "my-blog", "blog", "20260101000000.md")
+	if err != nil {
+		t.Fatalf("Create with dirty idea file: %v", err)
+	}
+	if entry.Name != "my-blog" {
+		t.Errorf("Name = %q", entry.Name)
+	}
+	if len(fake.commits) != 2 {
+		t.Errorf("commits = %d, want 2", len(fake.commits))
 	}
 }
 

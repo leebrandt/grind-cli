@@ -78,11 +78,11 @@ func (g *execGit) CreateBranch(repoPath, branch string) error {
 	return run(repoPath, "update-ref", "refs/heads/"+branch, commitHash)
 }
 
-// IsClean reports whether `git status --porcelain` in worktreePath is
-// empty. Untracked files count as dirty, so a stray file in .main blocks
-// project creation.
-func (g *execGit) IsClean(worktreePath string) (bool, error) {
-	out, err := output(worktreePath, "status", "--porcelain")
+// IsPathClean reports whether the given path in worktreePath has no
+// changes. `git status --porcelain -- <path>` lists only changes to that
+// path, so a dirty file elsewhere in the worktree does not count.
+func (g *execGit) IsPathClean(worktreePath, path string) (bool, error) {
+	out, err := output(worktreePath, "status", "--porcelain", "--", path)
 	if err != nil {
 		return false, err
 	}
