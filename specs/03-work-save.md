@@ -2,10 +2,10 @@
 
 **Slice 3 of the Go rewrite of the grind CLI.** The goal of this slice is
 time tracking: `work <project>` starts (or continues) a session, and
-`save <project>` ends it, commits **both** worktrees (the project work and
-the main state), and pushes both branches. Everything else (tasks, journal,
-status, push/pull commands, invoices) comes in later slices — do NOT build
-it.
+`save <project>` ends it and commits **both** worktrees (the project work
+and the main state). Saving is LOCAL — the remote is only touched by the
+explicit `grind push` command. Everything else (tasks, journal,
+status, pull, invoices) comes in later slices — do NOT build it.
 
 The user is learning Go with this project. Code must be idiomatic, readable,
 and commented with *why* (not *what*). No clever one-liners.
@@ -134,8 +134,8 @@ Flow:
 
 ### `grind save <project> [-t|--time <duration>]`
 
-Ends the project's active session, commits both worktrees, and pushes both
-branches.
+Ends the project's active session and commits both worktrees. Saving never
+touches the remote — pushing is `grind push`'s job (see below).
 
 Flow:
 
@@ -172,16 +172,14 @@ Flow:
 7. If the project worktree has uncommitted changes: commit ALL of them with
    `CommitAll` (see git section). Message is `Work session on <name> (<rounded>h)`
    when a session ended or was backfilled, otherwise `Save on <name>`.
-8. Push both branches — the project branch and the default branch (from
-   `.grind.json` `defaultBranch`, or `main`) — if a remote is configured.
-   No remote → skip silently. Push failure → print
-   `Warning: could not push to remote: <stderr>` and exit 0 (the work is
-   saved locally; the remote is best-effort, matching v1).
+8. Stop. Save is local-only: no remote check, no push, no network. The work
+   is committed and therefore durable; getting it to the remote is a
+   separate, explicit step.
 
 **Why commit both worktrees?** v1 only committed the main worktree on save,
 so the actual work product never reached the remote — the bug that this rule
 exists to prevent. The project worktree holds the work; `.main` holds the
-state. Both must be committed and pushed or the remote is useless.
+state. Both must be committed or the remote is useless.
 
 **Why `CommitAll` for the project worktree?** The constitution says "never
 `git add -A`". That rule protects the MAIN worktree, where config and state
@@ -189,6 +187,30 @@ files live alongside nothing else. A project worktree contains ONLY work
 product by construction (its branch starts at an empty tree), so staging
 everything there IS "stage the specific files changed". This is a deliberate,
 documented exception — approved by the user (see conversation).
+
+### `grind push`
+
+Pushes EVERY branch (the default branch plus each project branch) to the
+origin remote. This is the ONE verb that touches the remote — `save` commits
+locally so it stays fast and works offline, and `push` is when the remote
+catches up.
+
+Flow:
+
+1. Require a workspace.
+2. `git remote get-url origin` in the bare repo. No remote → user error
+   `No remote configured. Set remote.url in .grind.json first.` (exit 1).
+3. `git push origin --all` in the bare repo. A failed push is a REAL error
+   (exit 1) carrying git's stderr — the user asked for it, so a silent
+   warning would hide the failure. Success prints
+   `Pushed all branches to origin.`
+
+**Why explicit?** v1's save pushed nothing, so the work never left the
+machine. The fix is to commit both worktrees on save (the work is always
+durable locally) and to make remote sync a deliberate act. The user is the
+only user right now, so "forget to push" is a personal habit, not a team
+problem — and the future `status`/`wwd` slice will surface unpushed commits
+so forgetting is visible.
 
 ## Package structure
 
@@ -237,7 +259,7 @@ type Git interface {
     HasChanges(worktreePath string) (bool, error)   // NEW
     CommitAll(worktreePath, message string) error   // NEW
     RemoteURL(repoPath string) (string, error)      // NEW
-    Push(repoPath, branch string) error             // NEW
+    PushAll(repoPath string) error                  // NEW
 }
 ```
 
@@ -250,7 +272,9 @@ type Git interface {
 - `RemoteURL`: `git remote get-url origin` in the bare repo; returns `""`
   when no remote is configured (git exits non-zero — treat as empty, not an
   error).
-- `Push`: `git push origin <branch>` run in the bare repo.
+- `PushAll`: `git push origin --all` run in the bare repo — pushes every
+  branch so the remote mirrors the local bare repo. A failed push returns a
+  `PushError` carrying git's stderr (the CLI turns it into a user error).
 
 ### `internal/projects` (extend)
 
@@ -265,10 +289,10 @@ func (s *Service) StartSession(ws *workspace.Workspace, name string) (*config.Se
 // there was nothing to end and no backfill.
 func (s *Service) EndSession(ws *workspace.Workspace, name string, backfill float64) (*config.Session, error)
 
-// Save commits the project worktree (if dirty) and pushes both branches.
-// session is the session EndSession just ended (nil when there was none);
-// it decides the worktree commit message. Called by the CLI after
-// EndSession.
+// Save commits the project worktree (if dirty). Save is LOCAL: it never
+// pushes — remote sync is `grind push`'s job. session is the session
+// EndSession just ended (nil when there was none); it decides the worktree
+// commit message. Called by the CLI after EndSession.
 func (s *Service) Save(ws *workspace.Workspace, name string, session *config.Session) error
 ```
 
@@ -278,10 +302,9 @@ func (s *Service) Save(ws *workspace.Workspace, name string, session *config.Ses
   invoice slice may extract them later — do NOT build a shared package now.
 - `StartSession` commits `.projects.json` with `Start session on <name>`.
 - `EndSession` commits `.projects.json` with `Save session on <name>`.
-- `Save` uses `HasChanges` + `CommitAll` on the project worktree, then
-  `RemoteURL` + `Push` on both branches (project branch and default branch).
-  The worktree commit message is `Work session on <name> (<rounded>h)` when
-  `session` is non-nil, otherwise `Save on <name>`.
+- `Save` uses `HasChanges` + `CommitAll` on the project worktree. It does
+  NOT push. The worktree commit message is `Work session on <name> (<rounded>h)`
+  when `session` is non-nil, otherwise `Save on <name>`.
 
 ### `internal/cli` (extend)
 
@@ -294,6 +317,8 @@ func (s *Service) Save(ws *workspace.Workspace, name string, session *config.Ses
   `-t` via `projects.ParseDuration` (keeping the raw string for the
   backfill message), calls `EndSession`, prints the stopped/backfilled
   block, then calls `Save`.
+- `push` — new top-level command. Checks `RemoteURL`, then `PushAll`; a
+  failed push is a user error (exit 1) carrying git's stderr.
 - `NewRootCmd` wires the extended `projects.NewService(g)`.
 
 ## Testing
@@ -309,17 +334,20 @@ func (s *Service) Save(ws *workspace.Workspace, name string, session *config.Ses
   - `EndSession` ends at now; with `-t` ends at `start + duration`.
   - `EndSession` with no active session and `-t` creates `[now-t, now]`.
   - `EndSession` with no active session and no `-t` returns nil, no commit.
-  - `Save` commits the project worktree only when dirty; pushes both
-    branches when a remote exists; skips silently when none.
+  - `Save` commits the project worktree only when dirty; NEVER pushes (even
+    with a remote configured and a push error armed — a regression test
+    guards this).
 - git package tests: `HasChanges` (clean vs dirty vs untracked), `CommitAll`
   (stages new, modified, AND deleted files — the reason `git add .` alone is
-  not enough), `RemoteURL` (set vs unset), `Push` (pushes the named branch).
+  not enough), `RemoteURL` (set vs unset), `PushAll` (pushes every branch;
+  failure carries stderr in a `PushError`).
 - cli tests: `edit <project>` opens the editor on the project worktree
   without starting a session, `work` happy path (start + continue), `save`
   happy path, backfill both cases, invalid duration, unknown project, no
-  active session. Editor tests set `$EDITOR` to a no-op (`true`) so the
-  editor does not block; a recording script can verify the project worktree
-  directory is passed to the editor.
+  active session, `push` happy path, `push` with no remote (user error),
+  `push` failure (user error with stderr). Editor tests set `$EDITOR` to a
+  no-op (`true`) so the editor does not block; a recording script can verify
+  the project worktree directory is passed to the editor.
 - `go vet ./...` and `go build ./...` must pass. `go test ./...` must pass.
 
 ## Definition of done
@@ -329,12 +357,12 @@ func (s *Service) Save(ws *workspace.Workspace, name string, session *config.Ses
 - `grind work <project>` starts a session (and commits `.projects.json`);
   running it again continues the session without creating a second one.
 - `grind save <project>` ends the session, commits `.projects.json` on main
-  AND the work product in the project worktree, and pushes both branches.
+  AND the work product in the project worktree. It never pushes.
 - `grind save <project> -t 8h` backfills in BOTH cases: active session ends
   at `start + 8h`; no session creates `[now-8h, now]`.
 - `git -C .main status --porcelain` is empty after every command.
-- With a remote configured (a second bare repo works for testing), `save`
-  pushes both branches; without one, it skips silently.
+- `grind push` pushes every branch to the remote; with no remote it exits 1
+  with `No remote configured.`; a failed push exits 1 with git's stderr.
 - Error cases above all exit 1 with the specified messages.
 - No shell-string git commands anywhere in the codebase.
 - All tests pass, `go vet` clean.

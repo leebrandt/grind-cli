@@ -64,7 +64,9 @@ slice grows the per-project entry from slice 1's `{ "name": ... }` to:
 ```
 
 - `type` is omitted when empty (`omitempty`). `-t` is optional at creation.
-- `idea` is the FULL markdown content of the idea file that was promoted.
+- `idea` is the H1 header of the idea file that was promoted (e.g. `My Blog`
+  from `# My Blog`), NOT the full content. The full content lives in the
+  project worktree's `.idea` file (see `new project` flow).
 - `billing` is copied from `.grind.json` defaults at creation time. Per-project
   billing rates are a hard requirement (design constitution) — each entry
   carries its own block.
@@ -104,13 +106,18 @@ Flow (order matters — see "why" below):
 8. Add the worktree at `<root>/<name>` on branch `<name>`
    (`git.AddWorktree` — branch exists, so plain `worktree add`).
 9. Read the idea file content from `ideas/<filename>`.
-10. Add the entry to `.projects.json` (name, type, idea content, billing from
-    defaults, createdAt = now) and write it atomically.
-11. Commit ONLY `.projects.json` with message `Create project: <name>`.
-12. Delete the idea file from `ideas/`.
-13. Commit ONLY the deleted idea path with message
+10. Seed the project worktree: write the FULL idea content to `.idea` in the
+    worktree and commit it on the project branch with message
+    `Add idea: <title>` (the H1, via `ideas.ExtractTitle`). The project
+    branch starts from an EMPTY TREE, so this seed is the first work product
+    on the branch.
+11. Add the entry to `.projects.json` (name, type, idea = H1 title, billing
+    from defaults, createdAt = now) and write it atomically.
+12. Commit ONLY `.projects.json` with message `Create project: <name>`.
+13. Delete the idea file from `ideas/`.
+14. Commit ONLY the deleted idea path with message
     `Remove idea <filename> (now project <name>)`.
-14. Print:
+15. Print:
     ```
     Created project: my-blog
     Branch: my-blog
@@ -171,12 +178,12 @@ Same trick as the `ideas` alias: `Hidden: true`.
    Created: 2026-09-13
    Rate:    150/hr (quarter-hour)
 
-   # My Blog
-   ...full idea content...
+   My Blog
    ```
    Empty type renders as `—`. The `Rate` line prefixes the configured
    currency from `.grind.json` if set (e.g. `$150/hr`), otherwise no prefix.
-   The idea content is printed verbatim after a blank line.
+   The idea value (the H1 title) is printed verbatim after a blank line; the
+   full idea content lives in the project worktree's `.idea` file.
 
 ## Package structure
 
@@ -272,8 +279,10 @@ func (s *Service) Get(ws *workspace.Workspace, name string) (*config.ProjectEntr
   is in it.
 - `Create` reads `.grind.json` for billing defaults and project types; a
   missing `.grind.json` falls back to `config.Default()`.
-- `Create` deletes the idea file and commits both mutations (`.projects.json`
-  then the idea deletion) as two commits with the messages above.
+- `Create` seeds the project worktree with `.idea` (committed on the project
+  branch), then deletes the idea file and commits both main-worktree
+  mutations (`.projects.json` then the idea deletion) as two commits with
+  the messages above.
 
 ### `internal/cli` (extend)
 
@@ -308,11 +317,12 @@ func (s *Service) Get(ws *workspace.Workspace, name string) (*config.ProjectEntr
 ## Definition of done
 
 - `grind new project <name> <n> [-t type]` works end-to-end against real git:
-  branch created at an empty tree, worktree at `<root>/<name>`, `.projects.json`
-  entry written, idea file deleted, two commits on main.
+  branch created at an empty tree, worktree at `<root>/<name>`, `.idea` seed
+  committed on the project branch, `.projects.json` entry written (idea = H1),
+  idea file deleted, three commits on main.
 - `git -C .main status --porcelain` is empty after every command.
-- `ls <root>/<name>` is empty right after creation (only work product, no
-  state files).
+- `ls <root>/<name>` contains only the `.idea` seed file right after creation
+  (only work product, no state files).
 - `grind list projects` and the hidden `grind projects` alias work.
 - `grind show <name>` works; unknown project errors with exit 1.
 - Error cases above all exit 1 with the specified messages.
