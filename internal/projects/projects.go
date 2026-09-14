@@ -19,6 +19,7 @@ import (
 	"github.com/leebrandt/grind/internal/config"
 	"github.com/leebrandt/grind/internal/git"
 	"github.com/leebrandt/grind/internal/grinderr"
+	"github.com/leebrandt/grind/internal/ideas"
 	"github.com/leebrandt/grind/internal/workspace"
 )
 
@@ -128,10 +129,25 @@ func (s *Service) Create(ws *workspace.Workspace, name, projectType, ideaFilenam
 		return nil, worktreeNote(name, grinderr.WrapSystem(err, "read idea file %s", ideaPath))
 	}
 
+	// The project branch starts from an EMPTY TREE, so the idea has to be
+	// seeded explicitly: write the full idea content to .idea in the
+	// worktree and commit it. The .idea file is the project's seed — the
+	// first work product on the branch.
+	ideaFile := filepath.Join(worktreePath, ".idea")
+	if err := os.WriteFile(ideaFile, ideaContent, 0o644); err != nil {
+		return nil, worktreeNote(name, grinderr.WrapSystem(err, "write idea file %s", ideaFile))
+	}
+	title := ideas.ExtractTitle(string(ideaContent))
+	if err := s.Git.Commit(worktreePath, "Add idea: "+title, ".idea"); err != nil {
+		return nil, worktreeNote(name, err)
+	}
+
 	entry := &config.ProjectEntry{
 		Name: name,
 		Type: projectType,
-		Idea: string(ideaContent),
+		// The idea value is the H1 header of the idea file, not the full
+		// content — the full content lives in the project's .idea file.
+		Idea: title,
 		Billing: config.BillingEntry{
 			RoundTo: cfg.Billing.RoundTo,
 			Rate:    cfg.Billing.DefaultRate,

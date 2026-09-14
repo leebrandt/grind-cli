@@ -277,13 +277,14 @@ func titleFromFile(path string) (string, error) {
 	if err != nil {
 		return "", grinderr.WrapSystem(err, "read idea file %s", path)
 	}
-	return extractTitle(string(data)), nil
+	return ExtractTitle(string(data)), nil
 }
 
-// extractTitle returns the first heading line of an idea file with the
+// ExtractTitle returns the first heading line of an idea file with the
 // leading # characters and surrounding whitespace stripped. It returns ""
-// when the file has no heading.
-func extractTitle(content string) string {
+// when the file has no heading. Exported because projects uses it to store
+// the H1 as the project's idea value.
+func ExtractTitle(content string) string {
 	for _, line := range strings.Split(content, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "#") {

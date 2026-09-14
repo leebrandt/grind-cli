@@ -39,7 +39,11 @@ func (f *fakeGit) InitBare(path string) error { return nil }
 
 func (f *fakeGit) InitialCommit(repoPath, branch string) error { return nil }
 
-func (f *fakeGit) AddWorktree(repoPath, worktreePath, branch string) error { return nil }
+func (f *fakeGit) AddWorktree(repoPath, worktreePath, branch string) error {
+	// Real git creates the worktree directory on disk; the project
+	// creation flow relies on that when it writes the .idea seed file.
+	return os.MkdirAll(worktreePath, 0o755)
+}
 
 func (f *fakeGit) Commit(worktreePath, message string, paths ...string) error {
 	f.commits = append(f.commits, fakeCommit{worktree: worktreePath, message: message, paths: paths})
@@ -405,6 +409,32 @@ func TestNewProjectCommand(t *testing.T) {
 			t.Errorf("ideas dir still has %q after promotion", e.Name())
 		}
 	}
+
+	// The project worktree must contain the .idea seed with the FULL idea
+	// content, committed on the project branch.
+	ideaFile, err := os.ReadFile(filepath.Join("my-blog", ".idea"))
+	if err != nil {
+		t.Fatalf("read .idea: %v", err)
+	}
+	if string(ideaFile) != "# My Blog\n" {
+		t.Errorf(".idea content = %q, want %q", string(ideaFile), "# My Blog\n")
+	}
+	seed := commits[len(commits)-3]
+	if filepath.Base(seed.worktree) != "my-blog" {
+		t.Errorf("seed commit worktree = %q", seed.worktree)
+	}
+	if seed.message != "Add idea: My Blog" {
+		t.Errorf("seed commit message = %q", seed.message)
+	}
+
+	// The .projects.json idea value is the H1, not the full content.
+	projects, err := config.ReadProjects(filepath.Join(".main", ".projects.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := projects.Projects["my-blog"].Idea; got != "My Blog" {
+		t.Errorf("project idea value = %q, want %q", got, "My Blog")
+	}
 }
 
 func TestNewProjectNoType(t *testing.T) {
@@ -577,7 +607,9 @@ func TestShowCommand(t *testing.T) {
 	if !strings.Contains(out, "Rate:    150/hr (quarter-hour)") {
 		t.Errorf("output = %q", out)
 	}
-	if !strings.Contains(out, "# My Blog") {
+	// The idea value is the H1 header, so show prints the title, not the
+	// full idea content (which lives in the project's .idea file).
+	if !strings.Contains(out, "My Blog") {
 		t.Errorf("output = %q", out)
 	}
 }

@@ -48,7 +48,9 @@ func (f *fakeGit) InitialCommit(repoPath, branch string) error { return nil }
 func (f *fakeGit) AddWorktree(repoPath, worktreePath, branch string) error {
 	f.calls = append(f.calls, "AddWorktree:"+branch)
 	f.addWorktree = append(f.addWorktree, []string{repoPath, worktreePath, branch})
-	return nil
+	// Real git creates the worktree directory on disk; Create relies on
+	// that when it writes the .idea seed file.
+	return os.MkdirAll(worktreePath, 0o755)
 }
 
 func (f *fakeGit) Commit(worktreePath, message string, paths ...string) error {
@@ -199,8 +201,9 @@ func TestCreateHappyPath(t *testing.T) {
 	if entry.Type != "blog" {
 		t.Errorf("Type = %q", entry.Type)
 	}
-	if entry.Idea != "# My Blog\n\nSome details\n" {
-		t.Errorf("Idea = %q", entry.Idea)
+	// The idea value is the H1 header, not the full idea content.
+	if entry.Idea != "My Blog" {
+		t.Errorf("Idea = %q, want %q", entry.Idea, "My Blog")
 	}
 	if entry.Billing.RoundTo != "quarter-hour" {
 		t.Errorf("RoundTo = %q", entry.Billing.RoundTo)
@@ -227,23 +230,43 @@ func TestCreateHappyPath(t *testing.T) {
 		t.Errorf("AddWorktree branch = %q", fake.addWorktree[0][2])
 	}
 
-	// Two commits: .projects.json, then the idea deletion.
-	if len(fake.commits) != 2 {
-		t.Fatalf("commits = %d, want 2", len(fake.commits))
+	// Three commits: the .idea seed on the project worktree, .projects.json,
+	// then the idea deletion.
+	if len(fake.commits) != 3 {
+		t.Fatalf("commits = %d, want 3", len(fake.commits))
 	}
-	c1 := fake.commits[0]
+	c0 := fake.commits[0]
+	if c0.worktree != ws.ProjectWorktreePath("my-blog") {
+		t.Errorf("first commit worktree = %q", c0.worktree)
+	}
+	if c0.message != "Add idea: My Blog" {
+		t.Errorf("first commit message = %q", c0.message)
+	}
+	if len(c0.paths) != 1 || c0.paths[0] != ".idea" {
+		t.Errorf("first commit paths = %v", c0.paths)
+	}
+	c1 := fake.commits[1]
 	if c1.message != "Create project: my-blog" {
-		t.Errorf("first commit message = %q", c1.message)
+		t.Errorf("second commit message = %q", c1.message)
 	}
 	if len(c1.paths) != 1 || c1.paths[0] != ".projects.json" {
-		t.Errorf("first commit paths = %v", c1.paths)
+		t.Errorf("second commit paths = %v", c1.paths)
 	}
-	c2 := fake.commits[1]
+	c2 := fake.commits[2]
 	if c2.message != "Remove idea 20260101000000.md (now project my-blog)" {
-		t.Errorf("second commit message = %q", c2.message)
+		t.Errorf("third commit message = %q", c2.message)
 	}
 	if len(c2.paths) != 1 || c2.paths[0] != "ideas/20260101000000.md" {
-		t.Errorf("second commit paths = %v", c2.paths)
+		t.Errorf("third commit paths = %v", c2.paths)
+	}
+
+	// The .idea file in the worktree holds the FULL idea content.
+	ideaFile, err := os.ReadFile(filepath.Join(ws.ProjectWorktreePath("my-blog"), ".idea"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(ideaFile) != "# My Blog\n\nSome details\n" {
+		t.Errorf(".idea content = %q", string(ideaFile))
 	}
 
 	// The idea file must be deleted.
@@ -317,8 +340,8 @@ func TestCreateIgnoresDirtyIdeaFile(t *testing.T) {
 	if entry.Name != "my-blog" {
 		t.Errorf("Name = %q", entry.Name)
 	}
-	if len(fake.commits) != 2 {
-		t.Errorf("commits = %d, want 2", len(fake.commits))
+	if len(fake.commits) != 3 {
+		t.Errorf("commits = %d, want 3", len(fake.commits))
 	}
 }
 
