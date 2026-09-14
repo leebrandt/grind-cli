@@ -6,12 +6,14 @@ import (
 
 	"github.com/leebrandt/grind/internal/ideas"
 	"github.com/leebrandt/grind/internal/projects"
+	"github.com/leebrandt/grind/internal/tasks"
 	"github.com/leebrandt/grind/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
-// newNewCmd builds the `new` command group: `new idea` and `new project`.
-func newNewCmd(ideasSvc *ideas.Service, projectsSvc *projects.Service) *cobra.Command {
+// newNewCmd builds the `new` command group: `new idea`, `new project`, and
+// `new task`.
+func newNewCmd(ideasSvc *ideas.Service, projectsSvc *projects.Service, tasksSvc *tasks.Service) *cobra.Command {
 	newCmd := &cobra.Command{
 		Use:   "new",
 		Short: "Create something new",
@@ -19,6 +21,7 @@ func newNewCmd(ideasSvc *ideas.Service, projectsSvc *projects.Service) *cobra.Co
 
 	newCmd.AddCommand(newIdeaCmd(ideasSvc))
 	newCmd.AddCommand(newProjectCmd(ideasSvc, projectsSvc))
+	newCmd.AddCommand(newTaskCmd(projectsSvc, tasksSvc))
 
 	return newCmd
 }

@@ -6,19 +6,21 @@ import (
 
 	"github.com/leebrandt/grind/internal/ideas"
 	"github.com/leebrandt/grind/internal/projects"
+	"github.com/leebrandt/grind/internal/tasks"
 	"github.com/leebrandt/grind/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
-// newListCmd builds the `list` command group: `list ideas` and
-// `list projects`.
-func newListCmd(ideasSvc *ideas.Service, projectsSvc *projects.Service) *cobra.Command {
+// newListCmd builds the `list` command group: `list ideas`, `list projects`,
+// and `list tasks`.
+func newListCmd(ideasSvc *ideas.Service, projectsSvc *projects.Service, tasksSvc *tasks.Service) *cobra.Command {
 	list := &cobra.Command{
 		Use:   "list",
 		Short: "List things",
 	}
 	list.AddCommand(newListIdeasCmd(ideasSvc))
 	list.AddCommand(newListProjectsCmd(projectsSvc))
+	list.AddCommand(newListTasksCmd(tasksSvc))
 	return list
 }
 

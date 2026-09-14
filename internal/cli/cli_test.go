@@ -341,8 +341,8 @@ func TestVersionFlag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "0.90.1\n" {
-		t.Errorf("output = %q, want %q", out, "0.90.1\n")
+	if out != "0.90.2\n" {
+		t.Errorf("output = %q, want %q", out, "0.90.2\n")
 	}
 }
 

@@ -63,8 +63,15 @@ func TestWriteProjectsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read file: %v", err)
 	}
-	want := "{\n  \"version\": 1,\n  \"projects\": {}\n}\n"
+	want := "{\n  \"version\": 1,\n  \"nextTaskId\": 100,\n  \"projects\": {}\n}\n"
 	if string(data) != want {
 		t.Errorf("projects file = %q, want %q", string(data), want)
+	}
+}
+
+func TestDefaultProjectsStartsTaskCounterAt100(t *testing.T) {
+	cfg := DefaultProjects()
+	if cfg.NextTaskID != 100 {
+		t.Errorf("NextTaskID = %d, want 100", cfg.NextTaskID)
 	}
 }

@@ -77,8 +77,13 @@ func Write(path string, cfg GrindConfig) error {
 // project state in a single versioned file so future migrations can bump
 // the version field.
 type ProjectsConfig struct {
-	Version  int                     `json:"version"`
-	Projects map[string]ProjectEntry `json:"projects"`
+	Version int `json:"version"`
+	// NextTaskID is the next global task ID to hand out. It starts at 100
+	// and only ever increments; IDs are never reused across projects. A
+	// missing field (a workspace created before this slice) is treated as
+	// 100 by the tasks package.
+	NextTaskID int                     `json:"nextTaskId"`
+	Projects   map[string]ProjectEntry `json:"projects"`
 }
 
 // ProjectEntry is the per-project state block. The domain type lives here
@@ -91,6 +96,25 @@ type ProjectEntry struct {
 	Billing   BillingEntry `json:"billing"`
 	CreatedAt time.Time    `json:"createdAt"`
 	Sessions  []Session    `json:"sessions,omitempty"`
+	Tasks     []Task       `json:"tasks,omitempty"`
+}
+
+// Task is one item on a project's task list. The domain type lives here
+// (not in internal/tasks) for the same reason ProjectEntry does: tasks
+// imports workspace, which imports config — a tasks-owned type would
+// create an import cycle.
+type Task struct {
+	ID          int        `json:"id"`
+	Description string     `json:"description"`
+	Done        bool       `json:"done"`
+	CreatedAt   time.Time  `json:"createdAt"`
+	// CompletedAt is set when the task flips to done; it stays nil while
+	// the task is open.
+	CompletedAt *time.Time `json:"completedAt,omitempty"`
+	// DueDate is an optional LOCAL YYYY-MM-DD date. Local, not UTC — this
+	// deliberately fixes v1's bug where "due today" was computed against
+	// UTC and mislabeled tasks in negative-offset timezones.
+	DueDate string `json:"dueDate,omitempty"`
 }
 
 // Session is one work session on a project. Start is set when the session
@@ -114,11 +138,13 @@ type BillingEntry struct {
 	Rate    float64 `json:"rate"`
 }
 
-// DefaultProjects returns the empty projects skeleton.
+// DefaultProjects returns the empty projects skeleton. The task counter
+// starts at 100 (agreed with the user — the first task is #100, not #1).
 func DefaultProjects() ProjectsConfig {
 	return ProjectsConfig{
-		Version:  1,
-		Projects: map[string]ProjectEntry{},
+		Version:    1,
+		NextTaskID: 100,
+		Projects:   map[string]ProjectEntry{},
 	}
 }
 
