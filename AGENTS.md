@@ -157,21 +157,23 @@ into `.projects.json`, and commit. Project worktrees are untouched.
 
 ## Slices
 
-Planned order (each is a spec in `specs/`):
+Each slice is a vertical feature that works end-to-end, driven by a spec in
+`specs/`. Status is tracked here so we can see at a glance how much is done
+and what's next.
 
-1. **Foundation + ideas** — `init`, `new idea`, `list ideas`, `edit idea`,
-   `reject idea`, `prune ideas` ✅ current
-2. **Projects** — `new project`, `list projects`, `show`
-3. **Work/save** — sessions, commit both worktrees (local only; push is
-   explicit via `grind push`)
-4. **Tasks**
-5. **Journal**
-6. **Status**
-7. **Push/pull**
-8. **Config**
-9. **Publish/cancel**
-10. **Invoice**
-11. **Migrate** (v1 workspace conversion)
+| # | Slice | Status |
+|---|---|---|
+| 1 | Foundation + ideas | ✅ done |
+| 2 | Projects | ✅ done |
+| 3 | Work/save | ✅ done |
+| 4 | Tasks | ⬜ |
+| 5 | Journal | ⬜ |
+| 6 | Status (`wwd`) | ⬜ |
+| 7 | Push/pull | ⬜ |
+| 8 | Config | ⬜ |
+| 9 | Publish/cancel | ⬜ |
+| 10 | Invoice | ⬜ |
+| 11 | Migrate (v1 workspace conversion) | ⬜ |
 
 ## Build & test
 
