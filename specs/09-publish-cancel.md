@@ -117,10 +117,15 @@ Status string `json:"status,omitempty"`
 Three new methods on `Git` (and their `execGit` implementations):
 
 ```go
-// MergeBranch runs `git merge --no-ff <branch>` in the worktree, merging
-// the branch into the worktree's current branch. publish uses it to bring
-// a project branch into the default branch. --no-ff guarantees a visible
-// merge commit in history even when the merge could fast-forward.
+// MergeBranch runs `git merge --no-ff --allow-unrelated-histories <branch>`
+// in the worktree, merging the branch into the worktree's current branch.
+// publish uses it to bring a project branch into the default branch. --no-ff
+// guarantees a visible merge commit in history even when the merge could
+// fast-forward. --allow-unrelated-histories is REQUIRED: project branches
+// start from an empty tree (CreateBranch), so they share no history with
+// main — a plain merge fails with "refusing to merge unrelated histories".
+// The merge brings the work product (the .idea file) into main's tree; there
+// is no conflict because the project branch and main touch disjoint paths.
 MergeBranch(worktreePath, branch string) error
 
 // RemoveWorktree runs `git worktree remove --force <path>` in the bare
@@ -330,9 +335,11 @@ helper that builds the frontmatter + body and returns the relative path
 
 - `internal/git` (real git in temp dirs, following the existing
   `exec_test.go` patterns): `MergeBranch` merges a branch into main and
-  leaves a merge commit; `RemoveWorktree` removes a registered worktree;
-  `DeleteBranch` deletes a branch (and, as a regression guard, fails when
-  the branch is still checked out in a worktree).
+  leaves a merge commit — including the production shape where the branch
+  starts from an empty tree (unrelated histories); `RemoveWorktree` removes
+  a registered worktree; `DeleteBranch` deletes a branch (and, as a
+  regression guard, fails when the branch is still checked out in a
+  worktree).
 - `internal/projects` with a fake git (records `MergeBranch`,
   `RemoveWorktree`, `DeleteBranch`, `Commit`; per-worktree dirty control):
   - Publish happy path per cleanup choice: `n` → no cleanup calls; `w` →
