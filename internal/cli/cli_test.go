@@ -1780,6 +1780,33 @@ func TestCancelCommandHappyPath(t *testing.T) {
 	}
 }
 
+func TestCancelCommandCancelsOpenTasks(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+	if _, err := execute(t, fake, "new", "task", "my-blog", "write intro"); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := execute(t, fake, "cancel", "my-blog", "-y"); err != nil {
+		t.Fatalf("cancel my-blog -y: %v", err)
+	}
+
+	// The open task must be marked canceled, not deleted — the entry is a
+	// record of what was planned.
+	projects, err := config.ReadProjects(filepath.Join(".main", ".projects.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks := projects.Projects["my-blog"].Tasks
+	if len(tasks) != 1 {
+		t.Fatalf("tasks = %d, want 1 (cancel marks, never deletes)", len(tasks))
+	}
+	if !tasks[0].Canceled {
+		t.Errorf("task Canceled = false, want true")
+	}
+}
+
 func TestCancelCommandPromptWorktreeOnly(t *testing.T) {
 	fake, cleanup := runInWorkspace(t)
 	defer cleanup()

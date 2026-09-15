@@ -151,9 +151,13 @@ func (s *Service) List(ws *workspace.Workspace, projectName string, openOnly boo
 }
 
 // appendRows converts a project's tasks into rows, optionally filtering to
-// open tasks only.
+// open tasks only. Canceled tasks are always hidden — they were abandoned
+// with their project and are no longer actionable.
 func appendRows(rows []TaskRow, projectName string, tasks []config.Task, openOnly bool) []TaskRow {
 	for _, t := range tasks {
+		if t.Canceled {
+			continue
+		}
 		if openOnly && t.Done {
 			continue
 		}
@@ -191,6 +195,12 @@ func (s *Service) Complete(ws *workspace.Workspace, id int) (*config.Task, bool,
 				// v1 re-completed idempotently, producing a pointless
 				// commit; the rewrite skips the write entirely.
 				return &entry.Tasks[i], true, nil
+			}
+			if entry.Tasks[i].Canceled {
+				// A canceled task is invisible in the list, so this only
+				// fires when the user guesses an ID — refuse rather than
+				// complete a task that died with its project.
+				return nil, false, grinderr.NewUser(fmt.Sprintf("Task #%d is canceled.", id))
 			}
 
 			now := time.Now().UTC().Truncate(time.Second)

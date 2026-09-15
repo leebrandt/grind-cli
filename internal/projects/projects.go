@@ -325,6 +325,15 @@ func (s *Service) Cancel(ws *workspace.Workspace, name string, cleanup Cleanup) 
 	}
 
 	entry.Status = "canceled"
+	// Outstanding tasks die with the project: an open task on a canceled
+	// project is no longer actionable, so it is marked canceled and hidden
+	// from the task list. Done tasks stay done — they were completed before
+	// the project ended. The flag (not deletion) preserves the record.
+	for i := range entry.Tasks {
+		if !entry.Tasks[i].Done {
+			entry.Tasks[i].Canceled = true
+		}
+	}
 	if err := writeEntry(ws, name, *entry); err != nil {
 		return err
 	}

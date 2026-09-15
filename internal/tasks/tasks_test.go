@@ -375,6 +375,45 @@ func TestListOpenOnlyFiltersDone(t *testing.T) {
 	}
 }
 
+func TestListFiltersCanceled(t *testing.T) {
+	ws := newTestWorkspace(t)
+	addProject(t, ws, "my-blog",
+		task(100, "Write intro", "2026-09-20", false),
+		task(101, "Write outro", "", true),
+		task(102, "Abandoned", "", false),
+	)
+	// Mark task 102 canceled, as `grind cancel` would.
+	projects, err := config.ReadProjects(ws.ProjectsConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := projects.Projects["my-blog"]
+	entry.Tasks[2].Canceled = true
+	projects.Projects["my-blog"] = entry
+	if err := config.WriteProjects(ws.ProjectsConfigPath(), projects); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(&fakeGit{})
+
+	// Canceled tasks are hidden from BOTH views — they are no longer
+	// actionable, so even -a must not resurrect them.
+	open, err := svc.List(ws, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(open) != 1 || open[0].ID != 100 {
+		t.Errorf("open rows = %+v, want only task 100", open)
+	}
+
+	all, err := svc.List(ws, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all) != 2 {
+		t.Errorf("all rows = %d, want 2 (canceled task hidden)", len(all))
+	}
+}
+
 func TestListSortsByDueThenID(t *testing.T) {
 	ws := newTestWorkspace(t)
 	addProject(t, ws, "my-blog",
@@ -538,5 +577,37 @@ func TestCompleteAlreadyDoneSkipsCommit(t *testing.T) {
 	}
 	if len(fake.commits) != 0 {
 		t.Errorf("commits = %d, want 0 (no pointless re-complete commit)", len(fake.commits))
+	}
+}
+
+func TestCompleteRefusesCanceled(t *testing.T) {
+	ws := newTestWorkspace(t)
+	addProject(t, ws, "my-blog", task(100, "Write intro", "", false))
+	projects, err := config.ReadProjects(ws.ProjectsConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := projects.Projects["my-blog"]
+	entry.Tasks[0].Canceled = true
+	projects.Projects["my-blog"] = entry
+	if err := config.WriteProjects(ws.ProjectsConfigPath(), projects); err != nil {
+		t.Fatal(err)
+	}
+	fake := &fakeGit{}
+	svc := NewService(fake)
+
+	_, _, err = svc.Complete(ws, 100)
+	if err == nil {
+		t.Fatal("Complete on canceled task: expected error")
+	}
+	var user *grinderr.User
+	if !errors.As(err, &user) {
+		t.Fatalf("error = %T, want *grinderr.User", err)
+	}
+	if err.Error() != "Task #100 is canceled." {
+		t.Errorf("error = %q", err.Error())
+	}
+	if len(fake.commits) != 0 {
+		t.Errorf("commits = %d, want 0", len(fake.commits))
 	}
 }

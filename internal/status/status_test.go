@@ -340,3 +340,38 @@ func TestStatusSkipsCanceled(t *testing.T) {
 		t.Errorf("rows = %v, want [active published]", []string{rows[0].Name, rows[1].Name})
 	}
 }
+
+func TestStatusSkipsCanceledTasks(t *testing.T) {
+	// A canceled task must not count as open work and must not drive
+	// urgency — it died with its project.
+	projects := config.ProjectsConfig{
+		Version: 1,
+		Projects: map[string]config.ProjectEntry{
+			"alpha": {
+				Name: "alpha",
+				Tasks: []config.Task{
+					{ID: 100, Description: "open", DueDate: "2026-09-20"},
+					{ID: 101, Description: "canceled", DueDate: "2026-09-01", Canceled: true},
+					{ID: 102, Description: "done", Done: true},
+				},
+			},
+		},
+	}
+	ws := newTestWorkspace(t, projects)
+	svc := NewService(&fakeGit{})
+
+	rows, err := svc.Status(ws)
+	if err != nil {
+		t.Fatalf("Status() error = %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	if rows[0].TaskCount != 1 {
+		t.Errorf("TaskCount = %d, want 1 (canceled task not open work)", rows[0].TaskCount)
+	}
+	// The canceled task is overdue (2026-09-01) but must not drive urgency.
+	if rows[0].TaskUrgency != "none" {
+		t.Errorf("TaskUrgency = %q, want none", rows[0].TaskUrgency)
+	}
+}

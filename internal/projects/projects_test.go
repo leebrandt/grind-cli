@@ -966,6 +966,48 @@ func TestCancelHappyPath(t *testing.T) {
 	}
 }
 
+func TestCancelMarksOpenTasksCanceled(t *testing.T) {
+	ws := newTestWorkspace(t)
+	addProjectEntry(t, ws, "my-blog", "")
+	addProjectWorktree(t, ws, "my-blog")
+
+	// Seed one open task and one done task. The done task must survive
+	// cancel untouched — it was completed before the project ended.
+	projects, err := config.ReadProjects(ws.ProjectsConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := projects.Projects["my-blog"]
+	entry.Tasks = []config.Task{
+		{ID: 100, Description: "write intro", Done: false},
+		{ID: 101, Description: "ship v1", Done: true},
+	}
+	projects.Projects["my-blog"] = entry
+	if err := config.WriteProjects(ws.ProjectsConfigPath(), projects); err != nil {
+		t.Fatal(err)
+	}
+
+	svc := NewService(newFakeGit())
+	if err := svc.Cancel(ws, "my-blog", CleanupNone); err != nil {
+		t.Fatal(err)
+	}
+
+	projects, err = config.ReadProjects(ws.ProjectsConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks := projects.Projects["my-blog"].Tasks
+	if len(tasks) != 2 {
+		t.Fatalf("tasks = %d, want 2 (cancel marks, never deletes)", len(tasks))
+	}
+	if !tasks[0].Canceled {
+		t.Errorf("open task Canceled = false, want true")
+	}
+	if tasks[1].Canceled {
+		t.Errorf("done task Canceled = true, want false")
+	}
+}
+
 func TestCancelNonexistentProject(t *testing.T) {
 	ws := newTestWorkspace(t)
 	svc := NewService(newFakeGit())

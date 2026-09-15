@@ -151,6 +151,12 @@ type Task struct {
 	// deliberately fixes v1's bug where "due today" was computed against
 	// UTC and mislabeled tasks in negative-offset timezones.
 	DueDate string `json:"dueDate,omitempty"`
+	// Canceled marks an open task that was abandoned when its project was
+	// canceled. Canceled tasks are hidden from the task list and carry no
+	// urgency; the flag preserves the record of what was planned. Done
+	// tasks are never canceled — they were completed before the project
+	// ended.
+	Canceled bool `json:"canceled,omitempty"`
 }
 
 // Session is one work session on a project. Start is set when the session

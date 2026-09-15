@@ -109,9 +109,11 @@ func (s *Service) rowFor(ws *workspace.Workspace, name string, entry config.Proj
 
 	openTasks := 0
 	for _, t := range entry.Tasks {
-		if !t.Done {
-			openTasks++
+		// Canceled tasks died with their project — they are not open work.
+		if t.Done || t.Canceled {
+			continue
 		}
+		openTasks++
 	}
 
 	lastSession := "never"
@@ -152,8 +154,9 @@ func (s *Service) rowFor(ws *workspace.Workspace, name string, entry config.Proj
 func TaskUrgency(tasks []config.Task, today string) string {
 	highest := "none"
 	for _, t := range tasks {
-		// Completed tasks and tasks without a due date carry no urgency.
-		if t.Done || t.DueDate == "" {
+		// Completed and canceled tasks carry no urgency; neither do tasks
+		// without a due date.
+		if t.Done || t.Canceled || t.DueDate == "" {
 			continue
 		}
 		switch {
