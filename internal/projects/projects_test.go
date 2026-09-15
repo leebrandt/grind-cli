@@ -198,18 +198,6 @@ func TestValidateName(t *testing.T) {
 	}
 }
 
-func TestValidTypes(t *testing.T) {
-	cfg := config.Default()
-	if got := validTypes(cfg); !reflect.DeepEqual(got, defaultTypes) {
-		t.Errorf("validTypes(default) = %v, want %v", got, defaultTypes)
-	}
-
-	cfg.ProjectTypes = []string{"blog", "code"}
-	if got := validTypes(cfg); !reflect.DeepEqual(got, []string{"blog", "code"}) {
-		t.Errorf("validTypes(configured) = %v, want [blog code]", got)
-	}
-}
-
 func TestCreateHappyPath(t *testing.T) {
 	ws := newTestWorkspace(t)
 	writeIdea(t, ws, "20260101000000.md", "# My Blog\n\nSome details\n")

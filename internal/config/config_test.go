@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -14,6 +16,55 @@ func TestDefault(t *testing.T) {
 	if cfg.Billing.DefaultRate != 150 {
 		t.Errorf("DefaultRate = %v, want 150", cfg.Billing.DefaultRate)
 	}
+}
+
+func TestValidTypes(t *testing.T) {
+	cfg := Default()
+	if got := ValidTypes(cfg); !reflect.DeepEqual(got, defaultTypes) {
+		t.Errorf("ValidTypes(default) = %v, want %v", got, defaultTypes)
+	}
+
+	cfg.ProjectTypes = []string{"blog", "code"}
+	if got := ValidTypes(cfg); !reflect.DeepEqual(got, []string{"blog", "code"}) {
+		t.Errorf("ValidTypes(configured) = %v, want [blog code]", got)
+	}
+}
+
+func TestValidateType(t *testing.T) {
+	cfg := Default()
+
+	t.Run("empty is allowed", func(t *testing.T) {
+		if err := ValidateType(cfg, ""); err != nil {
+			t.Errorf("ValidateType('') = %v, want nil", err)
+		}
+	})
+
+	t.Run("valid type", func(t *testing.T) {
+		if err := ValidateType(cfg, "blog"); err != nil {
+			t.Errorf("ValidateType(blog) = %v, want nil", err)
+		}
+	})
+
+	t.Run("invalid type", func(t *testing.T) {
+		err := ValidateType(cfg, "nonsense")
+		if err == nil {
+			t.Fatal("expected error")
+		}
+		want := "Invalid type: nonsense. Valid types: " + strings.Join(defaultTypes, ", ")
+		if err.Error() != want {
+			t.Errorf("error = %q, want %q", err.Error(), want)
+		}
+	})
+
+	t.Run("configured types", func(t *testing.T) {
+		cfg.ProjectTypes = []string{"blog", "code"}
+		if err := ValidateType(cfg, "code"); err != nil {
+			t.Errorf("ValidateType(code) = %v, want nil", err)
+		}
+		if err := ValidateType(cfg, "nonsense"); err == nil {
+			t.Error("ValidateType(nonsense) = nil, want error")
+		}
+	})
 }
 
 func TestWriteReadRoundTrip(t *testing.T) {

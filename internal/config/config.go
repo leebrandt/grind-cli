@@ -9,8 +9,10 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/leebrandt/grind/internal/grinderr"
@@ -22,10 +24,16 @@ type BillingConfig struct {
 	DefaultRate float64 `json:"defaultRate"`
 }
 
-// MyConfig holds professional info about the workspace owner.
+// MyConfig holds professional info about the workspace owner. The full v1
+// set (company, address, phone, taxId) lives here so the config command can
+// get/set every key and the invoice slice can read them later.
 type MyConfig struct {
-	Name  string `json:"name,omitempty"`
-	Email string `json:"email,omitempty"`
+	Name    string `json:"name,omitempty"`
+	Company string `json:"company,omitempty"`
+	Address string `json:"address,omitempty"`
+	Phone   string `json:"phone,omitempty"`
+	Email   string `json:"email,omitempty"`
+	TaxID   string `json:"taxId,omitempty"`
 }
 
 // RemoteConfig holds the remote URL for cross-machine sync.
@@ -97,6 +105,29 @@ type ProjectEntry struct {
 	CreatedAt time.Time    `json:"createdAt"`
 	Sessions  []Session    `json:"sessions,omitempty"`
 	Tasks     []Task       `json:"tasks,omitempty"`
+	// Client is the invoice "TO" block. It lives in the config package (not
+	// internal/invoice) because the config command writes it and the invoice
+	// slice will read it.
+	Client *ClientInfo `json:"client,omitempty"`
+	// Repo and Code are part of the v1 schema and are settable now, but no
+	// command consumes them yet — later slices (push/pull per project, code
+	// management) will.
+	Repo string `json:"repo,omitempty"`
+	Code string `json:"code,omitempty"`
+	// LongTerm is a plain bool: unset and false are the same effective
+	// value, and omitempty keeps false out of the file.
+	LongTerm bool `json:"longTerm,omitempty"`
+	// Deadline is a strict local YYYY-MM-DD date, validated on set.
+	Deadline string `json:"deadline,omitempty"`
+}
+
+// ClientInfo is the invoice "TO" block for a project's client.
+type ClientInfo struct {
+	Contact string `json:"contact,omitempty"`
+	Company string `json:"company,omitempty"`
+	Address string `json:"address,omitempty"`
+	Phone   string `json:"phone,omitempty"`
+	Email   string `json:"email,omitempty"`
 }
 
 // Task is one item on a project's task list. The domain type lives here
@@ -200,4 +231,35 @@ func writeJSON(path string, v any) error {
 		return grinderr.WrapSystem(err, "replace file")
 	}
 	return nil
+}
+
+// defaultTypes is the fallback list of project types when .grind.json does
+// not configure any. It lives here (not in internal/projects) because the
+// config command needs the same list and projects imports config — a
+// config→projects import would be a cycle.
+var defaultTypes = []string{"blog", "webapp", "video", "song", "book", "feature", "issue"}
+
+// ValidTypes returns the effective project types: the configured list from
+// .grind.json, or the default list when none is configured.
+func ValidTypes(cfg GrindConfig) []string {
+	if len(cfg.ProjectTypes) > 0 {
+		return cfg.ProjectTypes
+	}
+	return defaultTypes
+}
+
+// ValidateType checks that projectType is in the effective types list. An
+// empty type is always allowed — the type is optional at creation.
+func ValidateType(cfg GrindConfig, projectType string) error {
+	if projectType == "" {
+		return nil
+	}
+	types := ValidTypes(cfg)
+	for _, t := range types {
+		if t == projectType {
+			return nil
+		}
+	}
+	return grinderr.NewUser(fmt.Sprintf("Invalid type: %s. Valid types: %s",
+		projectType, strings.Join(types, ", ")))
 }
