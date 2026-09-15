@@ -210,11 +210,16 @@ func (g *execGit) SetRemoteURL(repoPath, url string) error {
 	return run(repoPath, "remote", "set-url", "origin", url)
 }
 
-// PushBranch runs `git push origin <branch>` in the bare repo. Like
-// PushAll, a failed push is not fatal — the work is committed locally — so
-// the error carries git's stderr for a clean message.
+// PushBranch runs `git push -u origin <branch>` in the bare repo. The -u
+// sets the upstream tracking ref on the first push. Git only does that
+// automatically for the current branch of a checked-out worktree; pushing
+// from a bare repo leaves branch.<name>.remote unset, so `git status` in
+// .main would show no tracking info. -u is idempotent — on later pushes it
+// just re-asserts the same upstream. Like PushAll, a failed push is not
+// fatal — the work is committed locally — so the error carries git's stderr
+// for a clean message.
 func (g *execGit) PushBranch(repoPath, branch string) error {
-	_, stderr, err := outputFull(repoPath, "push", "origin", branch)
+	_, stderr, err := outputFull(repoPath, "push", "-u", "origin", branch)
 	if err == nil {
 		return nil
 	}

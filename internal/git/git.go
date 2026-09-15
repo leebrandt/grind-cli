@@ -72,8 +72,9 @@ type Git interface {
 	// not exist and updating it otherwise. push and pull sync origin from
 	// .grind.json's remote.url so the URL travels with the workspace.
 	SetRemoteURL(repoPath, url string) error
-	// PushBranch runs `git push origin <branch>` in the bare repo. Like
-	// PushAll, a failed push returns a *PushError carrying git's stderr.
+	// PushBranch runs `git push -u origin <branch>` in the bare repo,
+	// setting the upstream tracking ref on first push. Like PushAll, a
+	// failed push returns a *PushError carrying git's stderr.
 	PushBranch(repoPath, branch string) error
 	// FetchAll runs `git fetch origin` in the bare repo, updating the
 	// refs/remotes/origin/* tracking branches.

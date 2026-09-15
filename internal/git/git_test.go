@@ -731,6 +731,17 @@ func TestPushBranch(t *testing.T) {
 	if !strings.Contains(log, "Push me") {
 		t.Errorf("remote main = %q, want commit 'Push me'", strings.TrimSpace(log))
 	}
+
+	// The -u flag must have set the upstream tracking ref in the bare
+	// repo's config, even though the push ran from the bare repo (git only
+	// auto-sets upstream for a checked-out worktree).
+	upstream, err := output(bareRepo, "config", "branch.main.remote")
+	if err != nil {
+		t.Fatalf("branch.main.remote: %v", err)
+	}
+	if strings.TrimSpace(upstream) != "origin" {
+		t.Errorf("branch.main.remote = %q, want %q", strings.TrimSpace(upstream), "origin")
+	}
 }
 
 func TestPushBranchFailureCarriesStderr(t *testing.T) {
