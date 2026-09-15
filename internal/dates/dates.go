@@ -131,3 +131,39 @@ func validateDate(input string, year, month, day int) (string, error) {
 func dateError(input string) error {
 	return grinderr.NewUser(fmt.Sprintf("Unparseable date: %q", input))
 }
+
+// TimeAgo renders t relative to now in v1's format: "just now" under a
+// minute, then "5m ago", "3h ago", "2d ago", "4mo ago", "1y ago" (floored
+// units). now is injectable so tests can fix the reference time.
+//
+// The thresholds mirror v1's timeAgo exactly: <60s → "just now"; <60m →
+// "Xm ago"; <24h → "Xh ago"; <30d → "Xd ago"; <12mo → "Xmo ago"; else
+// "Xy ago". Months are 30-day buckets and years are 12-month buckets, so
+// the buckets line up with v1's math even across calendar quirks.
+func TimeAgo(t, now time.Time) string {
+	seconds := int64(now.Sub(t) / time.Second)
+	if seconds < 60 {
+		// This also catches future timestamps (negative delta): v1's
+		// `seconds < 60` did the same, so a clock skew or a session
+		// timestamped ahead of now reads "just now", never a negative
+		// "ago".
+		return "just now"
+	}
+	minutes := seconds / 60
+	if minutes < 60 {
+		return fmt.Sprintf("%dm ago", minutes)
+	}
+	hours := minutes / 60
+	if hours < 24 {
+		return fmt.Sprintf("%dh ago", hours)
+	}
+	days := hours / 24
+	if days < 30 {
+		return fmt.Sprintf("%dd ago", days)
+	}
+	months := days / 30
+	if months < 12 {
+		return fmt.Sprintf("%dmo ago", months)
+	}
+	return fmt.Sprintf("%dy ago", months/12)
+}

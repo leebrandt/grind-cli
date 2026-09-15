@@ -99,3 +99,42 @@ func TestParseDateErrorEchoesRawInput(t *testing.T) {
 		t.Errorf("error = %q", err.Error())
 	}
 }
+
+func TestTimeAgo(t *testing.T) {
+	// fixedAgoNow is the reference time for all TimeAgo tests. TimeAgo
+	// takes `now` as an argument (unlike v1's Date.now()) so tests can
+	// pin it and assert exact strings.
+	fixedAgoNow := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name string
+		ago  time.Duration // how far before fixedAgoNow the timestamp sits
+		want string
+	}{
+		{"30 seconds ago", 30 * time.Second, "just now"},
+		{"59 seconds ago", 59 * time.Second, "just now"},
+		{"exactly 1 minute ago", 60 * time.Second, "1m ago"},
+		{"5 minutes ago", 5 * time.Minute, "5m ago"},
+		{"59 minutes ago", 59 * time.Minute, "59m ago"},
+		{"3 hours ago", 3 * time.Hour, "3h ago"},
+		{"23 hours ago", 23 * time.Hour, "23h ago"},
+		{"2 days ago", 2 * 24 * time.Hour, "2d ago"},
+		{"29 days ago", 29 * 24 * time.Hour, "29d ago"},
+		// v1's months are 30-day buckets: 30 days is "1mo ago".
+		{"4 months ago", 4 * 30 * 24 * time.Hour, "4mo ago"},
+		{"11 months ago", 11 * 30 * 24 * time.Hour, "11mo ago"},
+		{"1 year ago", 365 * 24 * time.Hour, "1y ago"},
+		// A future timestamp gives a negative delta, which falls into the
+		// "just now" bucket — v1 behaved the same way.
+		{"10 minutes from now", -10 * time.Minute, "just now"},
+		{"2 days from now", -2 * 24 * time.Hour, "just now"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := TimeAgo(fixedAgoNow.Add(-tt.ago), fixedAgoNow)
+			if got != tt.want {
+				t.Errorf("TimeAgo(%v ago) = %q, want %q", tt.ago, got, tt.want)
+			}
+		})
+	}
+}
