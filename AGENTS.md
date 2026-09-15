@@ -166,9 +166,9 @@ and what's next.
 | 1 | Foundation + ideas | ✅ done |
 | 2 | Projects | ✅ done |
 | 3 | Work/save | ✅ done |
-| 4 | Tasks | ⬜ |
-| 5 | Journal | ⬜ |
-| 6 | Status (`wwd`) | ⬜ |
+| 4 | Tasks | ✅ done |
+| 5 | Journal | ✅ done |
+| 6 | Status (`wwd`) | ✅ done |
 | 7 | Push/pull | ⬜ |
 | 8 | Config | ⬜ |
 | 9 | Publish/cancel | ⬜ |
