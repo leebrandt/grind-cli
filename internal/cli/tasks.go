@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -113,55 +114,63 @@ func listTasksRunE(svc *tasks.Service) func(cmd *cobra.Command, args []string) e
 		}
 
 		out := cmd.OutOrStdout()
-		if len(rows) == 0 {
-			switch {
-			case projectName != "" && !all:
-				fmt.Fprintf(out, "No open tasks. Add one with: grind new task %s \"description\"\n", projectName)
-			case all:
-				fmt.Fprintln(out, "No tasks yet.")
-			default:
-				fmt.Fprintln(out, "All caught up! No open tasks.")
-			}
-			return nil
-		}
-
-		// "Today" is the LOCAL date — the v1 UTC bug does not come back.
-		today := time.Now().Format("2006-01-02")
-		palette := color.New(out)
-		// StripEscape removes the palette's tabwriter escape bytes (see
-		// internal/color) so colored cells stay aligned.
-		tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', tabwriter.StripEscape)
-		if projectName == "" {
-			fmt.Fprintln(tw, "#\tProject\tTask\tDue")
-		} else {
-			fmt.Fprintln(tw, "#\tTask\tDue")
-		}
-		for _, row := range rows {
-			due := row.DueDate
-			if due == "" {
-				// An em dash keeps the column aligned when no due date is
-				// set, and reads better than an empty cell.
-				due = "—"
-			} else if !row.Done {
-				due = colorDue(palette, due, today)
-			}
-			var line string
-			if projectName == "" {
-				line = fmt.Sprintf("%d\t%s\t%s\t%s\n", row.ID, row.Project, row.Description, due)
-			} else {
-				line = fmt.Sprintf("%d\t%s\t%s\n", row.ID, row.Description, due)
-			}
-			if row.Done {
-				// Completed rows render dimmed. The whole line is wrapped
-				// (not each cell) so tabwriter still sees plain cell widths
-				// and the columns stay aligned.
-				fmt.Fprint(tw, palette.Dim(line))
-			} else {
-				fmt.Fprint(tw, line)
-			}
-		}
-		return tw.Flush()
+		return renderTaskList(out, rows, projectName, all, color.New(out))
 	}
+}
+
+// renderTaskList renders the task list view shared by `list tasks` and
+// the hidden `wwd` dashboard: the empty-state message when no rows
+// match, otherwise the aligned table. projectName == "" selects the
+// all-projects view (Project column shown); all includes completed
+// tasks and changes the empty state's wording.
+func renderTaskList(out io.Writer, rows []tasks.TaskRow, projectName string, all bool, palette color.Palette) error {
+	if len(rows) == 0 {
+		switch {
+		case projectName != "" && !all:
+			fmt.Fprintf(out, "No open tasks. Add one with: grind new task %s \"description\"\n", projectName)
+		case all:
+			fmt.Fprintln(out, "No tasks yet.")
+		default:
+			fmt.Fprintln(out, "All caught up! No open tasks.")
+		}
+		return nil
+	}
+
+	// "Today" is the LOCAL date — the v1 UTC bug does not come back.
+	today := time.Now().Format("2006-01-02")
+	// StripEscape removes the palette's tabwriter escape bytes (see
+	// internal/color) so colored cells stay aligned.
+	tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', tabwriter.StripEscape)
+	if projectName == "" {
+		fmt.Fprintln(tw, "#\tProject\tTask\tDue")
+	} else {
+		fmt.Fprintln(tw, "#\tTask\tDue")
+	}
+	for _, row := range rows {
+		due := row.DueDate
+		if due == "" {
+			// An em dash keeps the column aligned when no due date is
+			// set, and reads better than an empty cell.
+			due = "—"
+		} else if !row.Done {
+			due = colorDue(palette, due, today)
+		}
+		var line string
+		if projectName == "" {
+			line = fmt.Sprintf("%d\t%s\t%s\t%s\n", row.ID, row.Project, row.Description, due)
+		} else {
+			line = fmt.Sprintf("%d\t%s\t%s\n", row.ID, row.Description, due)
+		}
+		if row.Done {
+			// Completed rows render dimmed. The whole line is wrapped
+			// (not each cell) so tabwriter still sees plain cell widths
+			// and the columns stay aligned.
+			fmt.Fprint(tw, palette.Dim(line))
+		} else {
+			fmt.Fprint(tw, line)
+		}
+	}
+	return tw.Flush()
 }
 
 // colorDue wraps a due date in the urgency color: red when overdue or due

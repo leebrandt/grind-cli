@@ -23,7 +23,7 @@ type fakeGit struct {
 	createBranch []string
 	dirtyPaths   map[string]bool
 	hasChanges   bool
-	commitAll     []fakeCommit
+	commitAll    []fakeCommit
 	remoteURL    string
 	pushAll      int
 	pushErr      error
@@ -352,8 +352,8 @@ func TestVersionFlag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "0.90.3\n" {
-		t.Errorf("output = %q, want %q", out, "0.90.3\n")
+	if out != "0.90.4\n" {
+		t.Errorf("output = %q, want %q", out, "0.90.4\n")
 	}
 }
 
