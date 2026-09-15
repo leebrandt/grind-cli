@@ -4,13 +4,13 @@
 // output and test buffers get plain text, so scripts and tests never see
 // escape codes.
 //
-// The palette brackets every ANSI code in text/tabwriter's escape
-// character (0xff). tabwriter ignores escaped text when computing column
-// widths, so colored cells stay aligned — without this, the escape codes
-// would count as cell width and push the visible text out of line.
-// Consumers that render through tabwriter must pass tabwriter.StripEscape
-// so the escape bytes are removed from the output. The status/wwd slice
-// will reuse this package.
+// The codes are plain ANSI (code + text + reset) — no tabwriter escape
+// bytes. Alignment is the consumer's job: pad the PLAIN text to its
+// column width, then color the padded cell. Coloring first would let the
+// codes count toward the width and push the visible text out of line.
+// text/tabwriter's escape mechanism cannot help here: it only keeps tabs
+// and newlines inside the escaped segment from terminating the cell, and
+// the escaped text still counts toward the column width.
 package color
 
 import (
@@ -24,11 +24,6 @@ const (
 	green  = "\x1b[32m"
 	dim    = "\x1b[2m"
 	reset  = "\x1b[0m"
-	// escape is text/tabwriter.Escape: text bracketed by this byte is
-	// passed through unchanged and excluded from column-width math. It is
-	// a string constant because the literal "\xff" is the single byte
-	// 0xff — string(0xff) would produce the UTF-8 encoding of U+00FF.
-	escape = "\xff"
 )
 
 // Palette wraps strings in ANSI color codes. When the writer is not a
@@ -74,11 +69,10 @@ func (p Palette) Dim(s string) string {
 }
 
 // wrap applies code + s + reset when colors are enabled, otherwise returns
-// s unchanged. The escape bytes bracket only the codes (never the text) so
-// tabwriter strips them without losing the visible string.
+// s unchanged.
 func (p Palette) wrap(code, s string) string {
 	if !p.enabled {
 		return s
 	}
-	return escape + code + escape + s + escape + reset + escape
+	return code + s + reset
 }

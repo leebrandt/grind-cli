@@ -78,11 +78,10 @@ func divider() string {
 // overdue, yellow when one is due today.
 //
 // The table is padded by hand rather than rendered through tabwriter:
-// tabwriter's escape mechanism (which internal/color uses to hide ANSI
-// codes) still counts escaped text toward the cell width, so a colored
-// cell in a non-last column pushes its row out of alignment. Padding the
+// tabwriter counts ANSI codes toward the cell width, so a colored cell in
+// a non-last column would push its row out of alignment. Padding the
 // plain text first and coloring the padded cell keeps the visible columns
-// straight.
+// straight — the same approach v1's Table class uses.
 func renderStatusTable(out io.Writer, rows []status.Row, palette color.Palette) error {
 	headers := []string{"Project", "Worked", "Tasks", "Last Session", "Last Commit"}
 
@@ -101,28 +100,10 @@ func renderStatusTable(out io.Writer, rows []status.Row, palette color.Palette) 
 		}
 	}
 
-	// writeRow pads every cell to its column width and separates columns
-	// with two spaces (tabwriter's padding in the list commands). The last
-	// cell is not padded — like tabwriter, nothing follows it, so trailing
-	// spaces would only pollute the line.
-	writeRow := func(cells []string) {
-		for i, c := range cells {
-			if i > 0 {
-				fmt.Fprint(out, "  ")
-			}
-			if i == len(cells)-1 {
-				fmt.Fprint(out, c)
-			} else {
-				fmt.Fprint(out, padRight(c, widths[i]))
-			}
-		}
-		fmt.Fprintln(out)
-	}
-
-	writeRow(headers)
+	fmt.Fprintln(out, renderRow(headers, widths))
 	for _, row := range rows {
 		// Color is applied AFTER padding: the visible text is already
-		// column-width wide, so the escape codes cannot shift it.
+		// column-width wide, so the ANSI codes cannot shift it.
 		name := padRight(row.Name, widths[0])
 		if row.IsActive {
 			name = palette.Green(name)
@@ -134,17 +115,7 @@ func renderStatusTable(out io.Writer, rows []status.Row, palette color.Palette) 
 		case "today":
 			taskCount = palette.Yellow(taskCount)
 		}
-		writeRow([]string{name, row.WorkedHours, taskCount, row.LastSession, row.LastCommit})
+		fmt.Fprintln(out, renderRow([]string{name, row.WorkedHours, taskCount, row.LastSession, row.LastCommit}, widths))
 	}
 	return nil
-}
-
-// padRight returns s padded with trailing spaces to width runes. Callers
-// pad the PLAIN text before applying color, so the padding math never
-// counts ANSI escape codes.
-func padRight(s string, width int) string {
-	if n := width - utf8.RuneCountInString(s); n > 0 {
-		return s + strings.Repeat(" ", n)
-	}
-	return s
 }

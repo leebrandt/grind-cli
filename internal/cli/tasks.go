@@ -5,8 +5,8 @@ import (
 	"io"
 	"strconv"
 	"strings"
-	"text/tabwriter"
 	"time"
+	"unicode/utf8"
 
 	"github.com/leebrandt/grind/internal/color"
 	"github.com/leebrandt/grind/internal/dates"
@@ -138,14 +138,31 @@ func renderTaskList(out io.Writer, rows []tasks.TaskRow, projectName string, all
 
 	// "Today" is the LOCAL date — the v1 UTC bug does not come back.
 	today := time.Now().Format("2006-01-02")
-	// StripEscape removes the palette's tabwriter escape bytes (see
-	// internal/color) so colored cells stay aligned.
-	tw := tabwriter.NewWriter(out, 0, 4, 2, ' ', tabwriter.StripEscape)
+
+	// Column widths come from the widest PLAIN cell (header included), so
+	// the padding math never sees ANSI codes. The table is padded by hand
+	// rather than rendered through tabwriter for the same reason as the
+	// status table: tabwriter counts ANSI codes toward the cell width, so
+	// colored or dimmed cells would push their row out of alignment.
+	var headers []string
 	if projectName == "" {
-		fmt.Fprintln(tw, "#\tProject\tTask\tDue")
+		headers = []string{"#", "Project", "Task", "Due"}
 	} else {
-		fmt.Fprintln(tw, "#\tTask\tDue")
+		headers = []string{"#", "Task", "Due"}
 	}
+	widths := make([]int, len(headers))
+	for i, h := range headers {
+		widths[i] = utf8.RuneCountInString(h)
+	}
+	for _, row := range rows {
+		for i, c := range taskCells(row, projectName, row.DueDate) {
+			if n := utf8.RuneCountInString(c); n > widths[i] {
+				widths[i] = n
+			}
+		}
+	}
+
+	fmt.Fprintln(out, renderRow(headers, widths))
 	for _, row := range rows {
 		due := row.DueDate
 		if due == "" {
@@ -155,22 +172,27 @@ func renderTaskList(out io.Writer, rows []tasks.TaskRow, projectName string, all
 		} else if !row.Done {
 			due = colorDue(palette, due, today)
 		}
-		var line string
-		if projectName == "" {
-			line = fmt.Sprintf("%d\t%s\t%s\t%s\n", row.ID, row.Project, row.Description, due)
-		} else {
-			line = fmt.Sprintf("%d\t%s\t%s\n", row.ID, row.Description, due)
-		}
+		cells := taskCells(row, projectName, due)
 		if row.Done {
-			// Completed rows render dimmed. The whole line is wrapped
-			// (not each cell) so tabwriter still sees plain cell widths
-			// and the columns stay aligned.
-			fmt.Fprint(tw, palette.Dim(line))
+			// Completed rows render dimmed. The whole padded line is
+			// wrapped (not each cell) so the dim attribute reads as one
+			// block; the padding was applied to plain text, so the codes
+			// cannot shift the columns.
+			fmt.Fprintln(out, palette.Dim(renderRow(cells, widths)))
 		} else {
-			fmt.Fprint(tw, line)
+			fmt.Fprintln(out, renderRow(cells, widths))
 		}
 	}
-	return tw.Flush()
+	return nil
+}
+
+// taskCells returns a row's cells in column order. The due cell is passed
+// in separately because it may be colored or replaced by an em dash.
+func taskCells(row tasks.TaskRow, projectName, due string) []string {
+	if projectName == "" {
+		return []string{strconv.Itoa(row.ID), row.Project, row.Description, due}
+	}
+	return []string{strconv.Itoa(row.ID), row.Description, due}
 }
 
 // colorDue wraps a due date in the urgency color: red when overdue or due
