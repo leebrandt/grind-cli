@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -609,5 +610,501 @@ func TestLastCommitDate(t *testing.T) {
 	}
 	if !missing.IsZero() {
 		t.Errorf("LastCommitDate(missing branch) = %v, want zero time", missing)
+	}
+}
+
+func TestDefaultBranch(t *testing.T) {
+	setGitIdentity(t)
+	root := t.TempDir()
+	g := New()
+
+	bareRepo := filepath.Join(root, ".grind.repo.git")
+	if err := g.InitBare(bareRepo); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.InitialCommit(bareRepo, "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	branch, err := g.DefaultBranch(bareRepo)
+	if err != nil {
+		t.Fatalf("DefaultBranch() error = %v", err)
+	}
+	if branch != "main" {
+		t.Errorf("DefaultBranch() = %q, want %q", branch, "main")
+	}
+}
+
+func TestSetRemoteURL(t *testing.T) {
+	bareRepo, _ := newBareRepoWithMain(t)
+	g := New()
+
+	// No origin yet: RemoteURL is empty.
+	url, err := g.RemoteURL(bareRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if url != "" {
+		t.Fatalf("RemoteURL() = %q, want empty", url)
+	}
+
+	// SetRemoteURL adds origin when it does not exist.
+	if err := g.SetRemoteURL(bareRepo, "git@example.com:repo.git"); err != nil {
+		t.Fatalf("SetRemoteURL() error = %v", err)
+	}
+	url, err = g.RemoteURL(bareRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if url != "git@example.com:repo.git" {
+		t.Errorf("RemoteURL() = %q, want %q", url, "git@example.com:repo.git")
+	}
+
+	// SetRemoteURL updates origin when it points elsewhere.
+	if err := g.SetRemoteURL(bareRepo, "git@example.com:other.git"); err != nil {
+		t.Fatalf("SetRemoteURL() error = %v", err)
+	}
+	url, err = g.RemoteURL(bareRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if url != "git@example.com:other.git" {
+		t.Errorf("RemoteURL() = %q, want %q", url, "git@example.com:other.git")
+	}
+
+	// Setting the same URL is a no-op.
+	if err := g.SetRemoteURL(bareRepo, "git@example.com:other.git"); err != nil {
+		t.Fatalf("SetRemoteURL() error = %v", err)
+	}
+	url, err = g.RemoteURL(bareRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if url != "git@example.com:other.git" {
+		t.Errorf("RemoteURL() = %q, want %q", url, "git@example.com:other.git")
+	}
+}
+
+func TestPushBranch(t *testing.T) {
+	setGitIdentity(t)
+	root := t.TempDir()
+	g := New()
+
+	bareRepo := filepath.Join(root, ".grind.repo.git")
+	if err := g.InitBare(bareRepo); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.InitialCommit(bareRepo, "main"); err != nil {
+		t.Fatal(err)
+	}
+	main := filepath.Join(root, ".main")
+	if err := g.AddWorktree(bareRepo, main, "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	// A bare repo can be its own remote: clone it, then push back.
+	remote := filepath.Join(root, "remote.git")
+	if err := run("", "clone", "--bare", bareRepo, remote); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(bareRepo, "remote", "add", "origin", remote); err != nil {
+		t.Fatal(err)
+	}
+
+	// Make a commit on main so there is something to push.
+	if err := os.WriteFile(filepath.Join(main, "pushed.md"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Commit(main, "Push me", "pushed.md"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := g.PushBranch(bareRepo, "main"); err != nil {
+		t.Fatalf("PushBranch() error = %v", err)
+	}
+
+	// The remote must now have the commit on main.
+	log, err := output(remote, "log", "--oneline", "-1", "main")
+	if err != nil {
+		t.Fatalf("remote log: %v", err)
+	}
+	if !strings.Contains(log, "Push me") {
+		t.Errorf("remote main = %q, want commit 'Push me'", strings.TrimSpace(log))
+	}
+}
+
+func TestPushBranchFailureCarriesStderr(t *testing.T) {
+	bareRepo, _ := newBareRepoWithMain(t)
+	g := New()
+
+	// Point origin at a path that does not exist, so push fails.
+	if err := run(bareRepo, "remote", "add", "origin", "/nonexistent/remote.git"); err != nil {
+		t.Fatal(err)
+	}
+
+	err := g.PushBranch(bareRepo, "main")
+	if err == nil {
+		t.Fatal("PushBranch() = nil error, want failure against a missing remote")
+	}
+
+	// The error must be a PushError carrying git's stderr, so push can
+	// print a clean message.
+	var pushErr *PushError
+	if !errors.As(err, &pushErr) {
+		t.Fatalf("error = %T, want *PushError", err)
+	}
+	if pushErr.Stderr == "" {
+		t.Error("PushError.Stderr is empty, want git's stderr")
+	}
+}
+
+func TestFetchAll(t *testing.T) {
+	setGitIdentity(t)
+	root := t.TempDir()
+	g := New()
+
+	local := filepath.Join(root, "local.git")
+	if err := g.InitBare(local); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.InitialCommit(local, "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	remote := filepath.Join(root, "remote.git")
+	if err := run("", "clone", "--bare", local, remote); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(local, "remote", "add", "origin", remote); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.PushBranch(local, "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Record the tracking ref before the remote moves.
+	before, err := output(local, "rev-parse", "refs/remotes/origin/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Make a commit on the remote's main via a worktree.
+	remoteWT := filepath.Join(root, "remote-wt")
+	if err := g.AddWorktree(remote, remoteWT, "main"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(remoteWT, "new.md"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Commit(remoteWT, "Remote commit", "new.md"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := g.FetchAll(local); err != nil {
+		t.Fatalf("FetchAll() error = %v", err)
+	}
+
+	// After fetching, the tracking ref points at the remote's new commit.
+	after, err := output(local, "rev-parse", "refs/remotes/origin/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before == after {
+		t.Error("tracking ref did not move after FetchAll")
+	}
+	remoteHead, err := output(remote, "rev-parse", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != remoteHead {
+		t.Errorf("tracking ref = %q, want remote main %q", after, remoteHead)
+	}
+}
+
+func TestIsAncestor(t *testing.T) {
+	setGitIdentity(t)
+	root := t.TempDir()
+	g := New()
+
+	bareRepo := filepath.Join(root, ".grind.repo.git")
+	if err := g.InitBare(bareRepo); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.InitialCommit(bareRepo, "main"); err != nil {
+		t.Fatal(err)
+	}
+	main := filepath.Join(root, ".main")
+	if err := g.AddWorktree(bareRepo, main, "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a feature branch at main's commit (not from an empty tree, so
+	// the histories share an ancestor).
+	if err := run(bareRepo, "branch", "feature"); err != nil {
+		t.Fatal(err)
+	}
+	feature := filepath.Join(root, "feature")
+	if err := g.AddWorktree(bareRepo, feature, "feature"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(feature, "f.md"), []byte("f\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Commit(feature, "Feature work", "f.md"); err != nil {
+		t.Fatal(err)
+	}
+
+	// main is an ancestor of feature.
+	ok, err := g.IsAncestor(bareRepo, "main", "feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Error("IsAncestor(main, feature) = false, want true")
+	}
+
+	// feature is not an ancestor of main.
+	ok, err = g.IsAncestor(bareRepo, "feature", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Error("IsAncestor(feature, main) = true, want false")
+	}
+
+	// Equal branches are ancestors of each other.
+	ok, err = g.IsAncestor(bareRepo, "main", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ok {
+		t.Error("IsAncestor(main, main) = false, want true")
+	}
+}
+
+func TestFastForwardWorktree(t *testing.T) {
+	setGitIdentity(t)
+	root := t.TempDir()
+	g := New()
+
+	bareRepo := filepath.Join(root, ".grind.repo.git")
+	if err := g.InitBare(bareRepo); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.InitialCommit(bareRepo, "main"); err != nil {
+		t.Fatal(err)
+	}
+	main := filepath.Join(root, ".main")
+	if err := g.AddWorktree(bareRepo, main, "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Remote clone with a newer commit on main.
+	remote := filepath.Join(root, "remote.git")
+	if err := run("", "clone", "--bare", bareRepo, remote); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(bareRepo, "remote", "add", "origin", remote); err != nil {
+		t.Fatal(err)
+	}
+	remoteWT := filepath.Join(root, "remote-wt")
+	if err := g.AddWorktree(remote, remoteWT, "main"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(remoteWT, "remote.md"), []byte("r\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Commit(remoteWT, "Remote commit", "remote.md"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := g.FetchAll(bareRepo); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.FastForwardWorktree(main, "main"); err != nil {
+		t.Fatalf("FastForwardWorktree() error = %v", err)
+	}
+
+	// The local worktree now has the remote commit.
+	log, err := output(main, "log", "--oneline", "-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(log, "Remote commit") {
+		t.Errorf("local main = %q, want 'Remote commit'", strings.TrimSpace(log))
+	}
+}
+
+func TestFastForwardWorktreeFailsOnDirty(t *testing.T) {
+	setGitIdentity(t)
+	root := t.TempDir()
+	g := New()
+
+	bareRepo := filepath.Join(root, ".grind.repo.git")
+	if err := g.InitBare(bareRepo); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.InitialCommit(bareRepo, "main"); err != nil {
+		t.Fatal(err)
+	}
+	main := filepath.Join(root, ".main")
+	if err := g.AddWorktree(bareRepo, main, "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	remote := filepath.Join(root, "remote.git")
+	if err := run("", "clone", "--bare", bareRepo, remote); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(bareRepo, "remote", "add", "origin", remote); err != nil {
+		t.Fatal(err)
+	}
+	remoteWT := filepath.Join(root, "remote-wt")
+	if err := g.AddWorktree(remote, remoteWT, "main"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(remoteWT, "remote.md"), []byte("r\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Commit(remoteWT, "Remote commit", "remote.md"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := g.FetchAll(bareRepo); err != nil {
+		t.Fatal(err)
+	}
+
+	// Dirty the local worktree by modifying a TRACKED file: git merge
+	// --ff-only refuses to overwrite uncommitted changes to tracked files.
+	// (An untracked file would not block the merge.)
+	tracked := filepath.Join(main, "tracked.md")
+	if err := os.WriteFile(tracked, []byte("v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Commit(main, "Add tracked.md", "tracked.md"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tracked, []byte("v2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := g.FastForwardWorktree(main, "main"); err == nil {
+		t.Fatal("FastForwardWorktree() = nil error, want failure on dirty worktree")
+	}
+}
+
+func TestFastForwardRef(t *testing.T) {
+	setGitIdentity(t)
+	root := t.TempDir()
+	g := New()
+
+	bareRepo := filepath.Join(root, ".grind.repo.git")
+	if err := g.InitBare(bareRepo); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.InitialCommit(bareRepo, "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create a feature branch that is NOT checked out in any worktree.
+	if err := run(bareRepo, "branch", "feature"); err != nil {
+		t.Fatal(err)
+	}
+
+	remote := filepath.Join(root, "remote.git")
+	if err := run("", "clone", "--bare", bareRepo, remote); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(bareRepo, "remote", "add", "origin", remote); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.PushBranch(bareRepo, "feature"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Commit on the remote's feature branch.
+	remoteWT := filepath.Join(root, "remote-wt")
+	if err := g.AddWorktree(remote, remoteWT, "feature"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(remoteWT, "f.md"), []byte("f\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Commit(remoteWT, "Feature commit", "f.md"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := g.FetchAll(bareRepo); err != nil {
+		t.Fatal(err)
+	}
+
+	before, err := output(bareRepo, "rev-parse", "feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := g.FastForwardRef(bareRepo, "feature"); err != nil {
+		t.Fatalf("FastForwardRef() error = %v", err)
+	}
+
+	after, err := output(bareRepo, "rev-parse", "feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+	remoteRef, err := output(bareRepo, "rev-parse", "refs/remotes/origin/feature")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if before == after {
+		t.Error("feature ref did not move")
+	}
+	if after != remoteRef {
+		t.Errorf("feature = %q, want remote ref %q", after, remoteRef)
+	}
+}
+
+func TestListRemoteBranches(t *testing.T) {
+	setGitIdentity(t)
+	root := t.TempDir()
+	g := New()
+
+	bareRepo := filepath.Join(root, ".grind.repo.git")
+	if err := g.InitBare(bareRepo); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.InitialCommit(bareRepo, "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	remote := filepath.Join(root, "remote.git")
+	if err := run("", "clone", "--bare", bareRepo, remote); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(bareRepo, "remote", "add", "origin", remote); err != nil {
+		t.Fatal(err)
+	}
+
+	// Push main and a project branch so both have remote-tracking refs.
+	if err := g.CreateBranch(bareRepo, "my-blog"); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.PushBranch(bareRepo, "main"); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.PushBranch(bareRepo, "my-blog"); err != nil {
+		t.Fatal(err)
+	}
+
+	branches, err := g.ListRemoteBranches(bareRepo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(branches) != 2 {
+		t.Fatalf("branches = %v, want [main my-blog]", branches)
+	}
+	sort.Strings(branches)
+	if branches[0] != "main" || branches[1] != "my-blog" {
+		t.Errorf("branches = %v, want [main my-blog]", branches)
 	}
 }

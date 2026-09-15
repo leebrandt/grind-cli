@@ -12,13 +12,14 @@ import (
 	"github.com/leebrandt/grind/internal/ideas"
 	"github.com/leebrandt/grind/internal/projects"
 	"github.com/leebrandt/grind/internal/status"
+	"github.com/leebrandt/grind/internal/sync"
 	"github.com/leebrandt/grind/internal/tasks"
 	"github.com/spf13/cobra"
 )
 
 // version is the grind release version. Bump the patch number at the end of
 // each slice so `grind -v` tells you which build you are testing.
-const version = "0.90.4"
+const version = "0.90.5"
 
 // NewRootCmd builds the complete grind command tree. The git implementation
 // is injected so tests can substitute a fake.
@@ -27,6 +28,7 @@ func NewRootCmd(g git.Git) *cobra.Command {
 	projectsSvc := projects.NewService(g)
 	tasksSvc := tasks.NewService(g)
 	statusSvc := status.NewService(g)
+	syncSvc := sync.NewService(g)
 
 	root := &cobra.Command{
 		Use:     "grind",
@@ -58,8 +60,9 @@ func NewRootCmd(g git.Git) *cobra.Command {
 	root.AddCommand(newPruneCmd(ideasSvc))
 	root.AddCommand(newShowCmd(projectsSvc))
 	root.AddCommand(newWorkCmd(projectsSvc))
-	root.AddCommand(newSaveCmd(projectsSvc))
-	root.AddCommand(newPushCmd(g))
+	root.AddCommand(newSaveCmd(projectsSvc, g))
+	root.AddCommand(newPushCmd(syncSvc))
+	root.AddCommand(newPullCmd(syncSvc))
 	root.AddCommand(newDoneCmd(tasksSvc))
 	root.AddCommand(newJournalAliasCmd())
 	root.AddCommand(newReadCmd())

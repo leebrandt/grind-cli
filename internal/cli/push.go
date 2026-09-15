@@ -1,49 +1,59 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 
-	"github.com/leebrandt/grind/internal/git"
-	"github.com/leebrandt/grind/internal/grinderr"
+	"github.com/leebrandt/grind/internal/sync"
 	"github.com/leebrandt/grind/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
-// newPushCmd builds `grind push`, which pushes every branch (the default
-// branch plus each project branch) to the origin remote.
+// newPushCmd builds `grind push [project|all]`, which pushes branches to
+// the origin remote.
 //
-// Pushing is deliberately explicit: `save` commits locally and never
-// touches the network, so it stays fast and works offline. `push` is the
-// one verb that syncs to the remote, so a failed push is a real error the
-// user asked for — not a silent warning.
-func newPushCmd(g git.Git) *cobra.Command {
+// Pushing is deliberately scoped: `grind push` pushes only the default
+// branch (state syncs by default), `grind push <project>` pushes one
+// project's branch, and `grind push all` pushes everything. A failed push
+// is a real error the user asked for — not a silent warning.
+func newPushCmd(svc *sync.Service) *cobra.Command {
 	return &cobra.Command{
-		Use:   "push",
-		Short: "Push all branches to the remote",
-		Args:  cobra.NoArgs,
+		Use:   "push [project|all]",
+		Short: "Push branches to the remote",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ws, err := workspace.Require(".")
 			if err != nil {
 				return err
 			}
 
-			remote, err := g.RemoteURL(ws.BareRepo)
+			scope := sync.ScopeMain
+			project := ""
+			if len(args) == 1 {
+				if args[0] == "all" {
+					// A project literally named "all" is shadowed by the
+					// keyword, same as `edit idea` shadowing a project
+					// named "idea".
+					scope = sync.ScopeAll
+				} else {
+					scope = sync.ScopeProject
+					project = args[0]
+				}
+			}
+
+			branch, err := svc.Push(ws, scope, project)
 			if err != nil {
 				return err
 			}
-			if remote == "" {
-				return grinderr.NewUser("No remote configured. Set remote.url in .grind.json first.")
-			}
 
-			if err := g.PushAll(ws.BareRepo); err != nil {
-				var pushErr *git.PushError
-				if errors.As(err, &pushErr) {
-					return grinderr.NewUser(fmt.Sprintf("Could not push to remote: %s", pushErr.Stderr))
-				}
-				return err
+			out := cmd.OutOrStdout()
+			if scope == sync.ScopeAll {
+				fmt.Fprintln(out, "Pushed all branches to origin.")
+				return nil
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Pushed all branches to origin.\n")
+			// For ScopeMain the branch name comes from git (via the
+			// service), not a hardcoded "main", so the message stays
+			// correct if init ever supports a different default branch.
+			fmt.Fprintf(out, "Pushed %s to origin.\n", branch)
 			return nil
 		},
 	}
