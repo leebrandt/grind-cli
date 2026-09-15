@@ -119,6 +119,11 @@ type ProjectEntry struct {
 	LongTerm bool `json:"longTerm,omitempty"`
 	// Deadline is a strict local YYYY-MM-DD date, validated on set.
 	Deadline string `json:"deadline,omitempty"`
+	// Status is the project lifecycle state: "" (active), "published", or
+	// "canceled". Unset means active — omitempty keeps the common case out
+	// of the file. Only the publish/cancel verbs write it; the config
+	// command lists it read-only.
+	Status string `json:"status,omitempty"`
 }
 
 // ClientInfo is the invoice "TO" block for a project's client.

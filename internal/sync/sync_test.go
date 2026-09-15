@@ -111,6 +111,12 @@ func (f *fakeGit) ListRemoteBranches(repoPath string) ([]string, error) {
 	return f.remoteBranches, nil
 }
 
+func (f *fakeGit) MergeBranch(worktreePath, branch string) error { return nil }
+
+func (f *fakeGit) RemoveWorktree(repoPath, worktreePath string) error { return nil }
+
+func (f *fakeGit) DeleteBranch(repoPath, branch string) error { return nil }
+
 // Ensure the fake satisfies the interface the service depends on.
 var _ git.Git = (*fakeGit)(nil)
 

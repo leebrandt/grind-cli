@@ -71,6 +71,12 @@ func (f *fakeGit) FastForwardRef(repoPath, branch string) error { return nil }
 
 func (f *fakeGit) ListRemoteBranches(repoPath string) ([]string, error) { return nil, nil }
 
+func (f *fakeGit) MergeBranch(worktreePath, branch string) error { return nil }
+
+func (f *fakeGit) RemoveWorktree(repoPath, worktreePath string) error { return nil }
+
+func (f *fakeGit) DeleteBranch(repoPath, branch string) error { return nil }
+
 // newTestWorkspace builds a workspace with an ideas dir, without touching git.
 func newTestWorkspace(t *testing.T) *workspace.Workspace {
 	t.Helper()

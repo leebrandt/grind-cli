@@ -35,6 +35,21 @@ func NewService(g git.Git) *Service {
 	return &Service{Git: g}
 }
 
+// Cleanup describes what to do with a project's worktree and branch after
+// a lifecycle operation (publish or cancel).
+type Cleanup int
+
+const (
+	// CleanupNone keeps both the worktree and the branch.
+	CleanupNone Cleanup = iota
+	// CleanupWorktree removes the worktree but keeps the branch.
+	CleanupWorktree
+	// CleanupBoth removes the worktree, then the branch. Deleting the
+	// branch requires the worktree to be gone first — git refuses to
+	// delete a checked-out branch.
+	CleanupBoth
+)
+
 // EnsureProjectsClean fails with a user error when .projects.json has
 // uncommitted changes. Only this file blocks project creation: it is the
 // one file Create overwrites, so a hand-edited version would be clobbered
@@ -175,8 +190,13 @@ func (s *Service) Create(ws *workspace.Workspace, name, projectType, ideaFilenam
 	return entry, nil
 }
 
-// List returns all projects sorted by name. A missing .projects.json is an
-// empty workspace, not an error.
+// List returns all projects sorted by name, skipping canceled ones. A
+// missing .projects.json is an empty workspace, not an error.
+//
+// Canceled projects disappear from the list to match v1, where cancel
+// removed the worktree and the worktree-driven list naturally dropped the
+// project. The rewrite's list is .projects.json-driven, so the filter is
+// explicit. Published projects stay — their worktree is preserved.
 func (s *Service) List(ws *workspace.Workspace) ([]config.ProjectEntry, error) {
 	projects, err := config.ReadProjects(ws.ProjectsConfigPath())
 	if err != nil {
@@ -188,6 +208,9 @@ func (s *Service) List(ws *workspace.Workspace) ([]config.ProjectEntry, error) {
 
 	entries := make([]config.ProjectEntry, 0, len(projects.Projects))
 	for _, entry := range projects.Projects {
+		if entry.Status == "canceled" {
+			continue
+		}
 		entries = append(entries, entry)
 	}
 	sort.Slice(entries, func(i, j int) bool {
@@ -218,6 +241,183 @@ func (s *Service) Get(ws *workspace.Workspace, name string) (*config.ProjectEntr
 func (s *Service) Require(ws *workspace.Workspace, name string) (*config.ProjectEntry, error) {
 	_, entry, err := loadProject(ws, name)
 	return &entry, err
+}
+
+// Publish merges the project branch into the default branch, exports the
+// final draft to published/, and marks the project published. It requires
+// both worktrees to be clean so the merge is safe and .main stays clean.
+// cleanup is applied AFTER the publish commit: the work is in main, so
+// removing the worktree and/or branch loses nothing.
+func (s *Service) Publish(ws *workspace.Workspace, name string, cleanup Cleanup) error {
+	entry, err := s.Require(ws, name)
+	if err != nil {
+		return err
+	}
+
+	worktreePath := ws.ProjectWorktreePath(name)
+	if _, err := os.Stat(worktreePath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return grinderr.NewUser(fmt.Sprintf("Project worktree '%s' does not exist.", name))
+		}
+		return grinderr.WrapSystem(err, "check project worktree %s", worktreePath)
+	}
+
+	// The merge rewrites .main's history, so both worktrees must be clean
+	// first. The error names exactly what to run — the same phrasing push
+	// uses, so the user learns one recovery verb.
+	mainDirty, err := s.Git.HasChanges(ws.MainWorktree)
+	if err != nil {
+		return err
+	}
+	if mainDirty {
+		return grinderr.NewUser("Main worktree has uncommitted changes. Run 'grind save' to commit them.")
+	}
+	projectDirty, err := s.Git.HasChanges(worktreePath)
+	if err != nil {
+		return err
+	}
+	if projectDirty {
+		return grinderr.NewUser(fmt.Sprintf("Project '%s' has uncommitted changes. Run 'grind save %s' to commit them.", name, name))
+	}
+
+	// Merge BEFORE any state change: a failed merge leaves nothing marked
+	// published (v1 committed the config first and could strand a project
+	// marked published with an unmerged branch).
+	if err := s.Git.MergeBranch(ws.MainWorktree, name); err != nil {
+		return grinderr.NewUser(fmt.Sprintf(
+			"Merge failed for project '%s'. Resolve conflicts in .main manually, then run 'grind save'.", name))
+	}
+
+	draftPath, err := s.writeDraft(ws, entry, worktreePath)
+	if err != nil {
+		return err
+	}
+
+	entry.Status = "published"
+	if err := writeEntry(ws, name, *entry); err != nil {
+		return err
+	}
+	if err := s.Git.Commit(ws.MainWorktree, "Publish project: "+name, ".projects.json", draftPath); err != nil {
+		return err
+	}
+
+	return s.applyCleanup(ws, name, cleanup)
+}
+
+// Cancel marks the project canceled in .projects.json, then applies
+// cleanup. The entry stays as a record; the confirmation prompt lives in
+// the CLI, not here. The record is committed BEFORE the cleanup so a
+// cleanup failure leaves a canceled project with a lingering worktree
+// (recoverable) rather than a deleted worktree with an active project
+// (data loss with no record).
+func (s *Service) Cancel(ws *workspace.Workspace, name string, cleanup Cleanup) error {
+	entry, err := s.Require(ws, name)
+	if err != nil {
+		return err
+	}
+
+	worktreePath := ws.ProjectWorktreePath(name)
+	if _, err := os.Stat(worktreePath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return grinderr.NewUser(fmt.Sprintf("Project worktree '%s' does not exist.", name))
+		}
+		return grinderr.WrapSystem(err, "check project worktree %s", worktreePath)
+	}
+
+	entry.Status = "canceled"
+	if err := writeEntry(ws, name, *entry); err != nil {
+		return err
+	}
+	if err := s.Git.Commit(ws.MainWorktree, "Cancel project: "+name, ".projects.json"); err != nil {
+		return err
+	}
+
+	return s.applyCleanup(ws, name, cleanup)
+}
+
+// writeDraft builds the final-draft markdown file for a project and writes
+// it to published/<name>.md in the main worktree. It returns the path
+// relative to .main so the caller can stage exactly that file.
+//
+// The body is the project's .idea file — the founding document the user
+// edits as the work product. If .idea is missing (Create always seeds it,
+// but a hand-edited workspace may not have one), the idea title from
+// .projects.json is the fallback.
+func (s *Service) writeDraft(ws *workspace.Workspace, entry *config.ProjectEntry, worktreePath string) (string, error) {
+	body, err := os.ReadFile(filepath.Join(worktreePath, ".idea"))
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", grinderr.WrapSystem(err, "read .idea file in %s", worktreePath)
+		}
+		body = []byte(entry.Idea)
+	}
+
+	title := entry.Idea
+	if title == "" {
+		title = entry.Name
+	}
+
+	// The date is LOCAL, not UTC — the same decision as deadlines and due
+	// dates, so "published today" matches the user's calendar.
+	var b strings.Builder
+	b.WriteString("---\n")
+	fmt.Fprintf(&b, "title: %s\n", title)
+	if entry.Type != "" {
+		fmt.Fprintf(&b, "type: %s\n", entry.Type)
+	}
+	fmt.Fprintf(&b, "date: %s\n", time.Now().Format("2006-01-02"))
+	cfg, err := readConfig(ws)
+	if err != nil {
+		return "", err
+	}
+	if cfg.My != nil && cfg.My.Name != "" {
+		fmt.Fprintf(&b, "author: %s\n", cfg.My.Name)
+	}
+	b.WriteString("status: published\n")
+	b.WriteString("---\n\n")
+	b.Write(body)
+	if !strings.HasSuffix(b.String(), "\n") {
+		b.WriteByte('\n')
+	}
+
+	relPath := filepath.Join("published", entry.Name+".md")
+	absPath := filepath.Join(ws.MainWorktree, relPath)
+	if err := os.WriteFile(absPath, []byte(b.String()), 0o644); err != nil {
+		return "", grinderr.WrapSystem(err, "write draft %s", absPath)
+	}
+	return relPath, nil
+}
+
+// applyCleanup removes the project's worktree and/or branch per the user's
+// choice. It is shared by Publish and Cancel so both verbs ask the same
+// question and behave identically.
+func (s *Service) applyCleanup(ws *workspace.Workspace, name string, cleanup Cleanup) error {
+	switch cleanup {
+	case CleanupNone:
+		return nil
+	case CleanupWorktree:
+		return s.Git.RemoveWorktree(ws.BareRepo, ws.ProjectWorktreePath(name))
+	case CleanupBoth:
+		// The branch can only be deleted after the worktree is gone — git
+		// refuses to delete a branch that is checked out in a worktree.
+		if err := s.Git.RemoveWorktree(ws.BareRepo, ws.ProjectWorktreePath(name)); err != nil {
+			return err
+		}
+		return s.Git.DeleteBranch(ws.BareRepo, name)
+	default:
+		return grinderr.NewSystem(fmt.Sprintf("unknown cleanup choice %d", cleanup))
+	}
+}
+
+// writeEntry updates one project in .projects.json and writes the file
+// atomically.
+func writeEntry(ws *workspace.Workspace, name string, entry config.ProjectEntry) error {
+	projects, err := config.ReadProjects(ws.ProjectsConfigPath())
+	if err != nil {
+		return err
+	}
+	projects.Projects[name] = entry
+	return config.WriteProjects(ws.ProjectsConfigPath(), projects)
 }
 
 // validateName checks the project name rules from the spec. The name IS the

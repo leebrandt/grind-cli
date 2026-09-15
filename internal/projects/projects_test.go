@@ -23,9 +23,13 @@ type fakeGit struct {
 	commitAll       []fakeCommit
 	createBranch    []string
 	addWorktree     [][]string
+	removeWorktree  []string
+	deleteBranch    []string
 	dirtyPaths      map[string]bool
+	dirtyWorktrees  map[string]bool
 	createBranchErr error
 	commitErr       error
+	mergeErr        error
 	hasChanges      bool
 	remoteURL       string
 	pushAll         int
@@ -73,6 +77,11 @@ func (f *fakeGit) CreateBranch(repoPath, branch string) error {
 }
 
 func (f *fakeGit) HasChanges(worktreePath string) (bool, error) {
+	// Per-worktree dirty control lets publish/cancel tests mark exactly one
+	// worktree dirty. When unset, the plain hasChanges flag is the answer.
+	if f.dirtyWorktrees != nil {
+		return f.dirtyWorktrees[worktreePath], nil
+	}
 	return f.hasChanges, nil
 }
 
@@ -114,6 +123,21 @@ func (f *fakeGit) FastForwardRef(repoPath, branch string) error { return nil }
 
 func (f *fakeGit) ListRemoteBranches(repoPath string) ([]string, error) { return nil, nil }
 
+func (f *fakeGit) MergeBranch(worktreePath, branch string) error {
+	f.calls = append(f.calls, "MergeBranch:"+branch)
+	return f.mergeErr
+}
+
+func (f *fakeGit) RemoveWorktree(repoPath, worktreePath string) error {
+	f.removeWorktree = append(f.removeWorktree, worktreePath)
+	return nil
+}
+
+func (f *fakeGit) DeleteBranch(repoPath, branch string) error {
+	f.deleteBranch = append(f.deleteBranch, branch)
+	return nil
+}
+
 // newTestWorkspace builds a workspace with config files and an ideas dir,
 // without touching git.
 func newTestWorkspace(t *testing.T) *workspace.Workspace {
@@ -121,6 +145,9 @@ func newTestWorkspace(t *testing.T) *workspace.Workspace {
 	dir := t.TempDir()
 	main := filepath.Join(dir, ".main")
 	if err := os.MkdirAll(filepath.Join(main, "ideas"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(main, "published"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	ws := &workspace.Workspace{
@@ -635,3 +662,433 @@ func TestGetMissingFile(t *testing.T) {
 
 // Ensure the git package is linked in tests that reference the interface.
 var _ git.Git = (*fakeGit)(nil)
+
+// addProjectEntry writes a project entry with the given status into
+// .projects.json, so publish/cancel tests start from a known state.
+func addProjectEntry(t *testing.T, ws *workspace.Workspace, name, status string) {
+	t.Helper()
+	projects, err := config.ReadProjects(ws.ProjectsConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := config.ProjectEntry{
+		Name:      name,
+		Type:      "blog",
+		Idea:      "My Blog",
+		Billing:   config.BillingEntry{RoundTo: "quarter-hour", Rate: 150},
+		CreatedAt: time.Now().UTC().Truncate(time.Second),
+		Status:    status,
+	}
+	projects.Projects[name] = entry
+	if err := config.WriteProjects(ws.ProjectsConfigPath(), projects); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// addProjectWorktree creates the project worktree directory with an .idea
+// file, mimicking what `grind new project` leaves behind.
+func addProjectWorktree(t *testing.T, ws *workspace.Workspace, name string) {
+	t.Helper()
+	dir := ws.ProjectWorktreePath(name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".idea"), []byte("# My Blog\n\nSome details\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPublishHappyPath(t *testing.T) {
+	ws := newTestWorkspace(t)
+	addProjectEntry(t, ws, "my-blog", "")
+	addProjectWorktree(t, ws, "my-blog")
+	fake := newFakeGit()
+	svc := NewService(fake)
+
+	if err := svc.Publish(ws, "my-blog", CleanupBoth); err != nil {
+		t.Fatal(err)
+	}
+
+	// The merge must run before the state change.
+	if len(fake.calls) != 1 || fake.calls[0] != "MergeBranch:my-blog" {
+		t.Errorf("git calls = %v, want [MergeBranch:my-blog]", fake.calls)
+	}
+
+	// The draft must be written with the full frontmatter and the .idea
+	// body, ending in a newline.
+	draft, err := os.ReadFile(filepath.Join(ws.MainWorktree, "published", "my-blog.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "---\ntitle: My Blog\ntype: blog\ndate: " + time.Now().Format("2006-01-02") + "\nstatus: published\n---\n\n# My Blog\n\nSome details\n"
+	if string(draft) != want {
+		t.Errorf("draft = %q, want %q", string(draft), want)
+	}
+
+	// The entry must be marked published.
+	projects, err := config.ReadProjects(ws.ProjectsConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := projects.Projects["my-blog"].Status; got != "published" {
+		t.Errorf("Status = %q, want published", got)
+	}
+
+	// One commit: the publish commit staging .projects.json and the draft.
+	if len(fake.commits) != 1 {
+		t.Fatalf("commits = %d, want 1", len(fake.commits))
+	}
+	c := fake.commits[0]
+	if c.message != "Publish project: my-blog" {
+		t.Errorf("commit message = %q", c.message)
+	}
+	if len(c.paths) != 2 || c.paths[0] != ".projects.json" || c.paths[1] != "published/my-blog.md" {
+		t.Errorf("commit paths = %v", c.paths)
+	}
+
+	// CleanupBoth removes the worktree, then the branch.
+	if len(fake.removeWorktree) != 1 || fake.removeWorktree[0] != ws.ProjectWorktreePath("my-blog") {
+		t.Errorf("RemoveWorktree calls = %v", fake.removeWorktree)
+	}
+	if len(fake.deleteBranch) != 1 || fake.deleteBranch[0] != "my-blog" {
+		t.Errorf("DeleteBranch calls = %v", fake.deleteBranch)
+	}
+}
+
+func TestPublishDraftOmitsOptionalFrontmatter(t *testing.T) {
+	ws := newTestWorkspace(t)
+	// No type, no author in config, and no .idea file: the draft falls back
+	// to entry.Idea for both title and body.
+	projects, err := config.ReadProjects(ws.ProjectsConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	projects.Projects["my-blog"] = config.ProjectEntry{
+		Name: "my-blog",
+		Idea: "My Blog",
+	}
+	if err := config.WriteProjects(ws.ProjectsConfigPath(), projects); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(ws.ProjectWorktreePath("my-blog"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fake := newFakeGit()
+	svc := NewService(fake)
+
+	if err := svc.Publish(ws, "my-blog", CleanupNone); err != nil {
+		t.Fatal(err)
+	}
+
+	draft, err := os.ReadFile(filepath.Join(ws.MainWorktree, "published", "my-blog.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "---\ntitle: My Blog\ndate: " + time.Now().Format("2006-01-02") + "\nstatus: published\n---\n\nMy Blog\n"
+	if string(draft) != want {
+		t.Errorf("draft = %q, want %q", string(draft), want)
+	}
+}
+
+func TestPublishDraftIncludesAuthor(t *testing.T) {
+	ws := newTestWorkspace(t)
+	cfg := config.Default()
+	cfg.My = &config.MyConfig{Name: "Lee"}
+	if err := config.Write(ws.GrindConfigPath(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	addProjectEntry(t, ws, "my-blog", "")
+	addProjectWorktree(t, ws, "my-blog")
+	fake := newFakeGit()
+	svc := NewService(fake)
+
+	if err := svc.Publish(ws, "my-blog", CleanupNone); err != nil {
+		t.Fatal(err)
+	}
+
+	draft, err := os.ReadFile(filepath.Join(ws.MainWorktree, "published", "my-blog.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(draft), "author: Lee\n") {
+		t.Errorf("draft missing author:\n%s", draft)
+	}
+}
+
+func TestPublishNonexistentProject(t *testing.T) {
+	ws := newTestWorkspace(t)
+	svc := NewService(newFakeGit())
+
+	err := svc.Publish(ws, "nope", CleanupNone)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var user *grinderr.User
+	if !errors.As(err, &user) {
+		t.Fatalf("expected *grinderr.User, got %T", err)
+	}
+	if err.Error() != "Project 'nope' does not exist." {
+		t.Errorf("message = %q", err.Error())
+	}
+}
+
+func TestPublishMissingWorktree(t *testing.T) {
+	ws := newTestWorkspace(t)
+	addProjectEntry(t, ws, "my-blog", "")
+	// No worktree directory.
+	svc := NewService(newFakeGit())
+
+	err := svc.Publish(ws, "my-blog", CleanupNone)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var user *grinderr.User
+	if !errors.As(err, &user) {
+		t.Fatalf("expected *grinderr.User, got %T", err)
+	}
+	if err.Error() != "Project worktree 'my-blog' does not exist." {
+		t.Errorf("message = %q", err.Error())
+	}
+}
+
+func TestPublishDirtyMain(t *testing.T) {
+	ws := newTestWorkspace(t)
+	addProjectEntry(t, ws, "my-blog", "")
+	addProjectWorktree(t, ws, "my-blog")
+	fake := newFakeGit()
+	fake.dirtyWorktrees = map[string]bool{ws.MainWorktree: true}
+	svc := NewService(fake)
+
+	err := svc.Publish(ws, "my-blog", CleanupNone)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var user *grinderr.User
+	if !errors.As(err, &user) {
+		t.Fatalf("expected *grinderr.User, got %T", err)
+	}
+	want := "Main worktree has uncommitted changes. Run 'grind save' to commit them."
+	if err.Error() != want {
+		t.Errorf("message = %q, want %q", err.Error(), want)
+	}
+	// No merge, no commit.
+	if len(fake.calls) != 0 || len(fake.commits) != 0 {
+		t.Errorf("calls = %v, commits = %d, want none", fake.calls, len(fake.commits))
+	}
+}
+
+func TestPublishDirtyProject(t *testing.T) {
+	ws := newTestWorkspace(t)
+	addProjectEntry(t, ws, "my-blog", "")
+	addProjectWorktree(t, ws, "my-blog")
+	fake := newFakeGit()
+	fake.dirtyWorktrees = map[string]bool{ws.ProjectWorktreePath("my-blog"): true}
+	svc := NewService(fake)
+
+	err := svc.Publish(ws, "my-blog", CleanupNone)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var user *grinderr.User
+	if !errors.As(err, &user) {
+		t.Fatalf("expected *grinderr.User, got %T", err)
+	}
+	want := "Project 'my-blog' has uncommitted changes. Run 'grind save my-blog' to commit them."
+	if err.Error() != want {
+		t.Errorf("message = %q, want %q", err.Error(), want)
+	}
+}
+
+func TestPublishMergeFailure(t *testing.T) {
+	ws := newTestWorkspace(t)
+	addProjectEntry(t, ws, "my-blog", "")
+	addProjectWorktree(t, ws, "my-blog")
+	fake := newFakeGit()
+	fake.mergeErr = grinderr.NewSystem("merge conflict")
+	svc := NewService(fake)
+
+	err := svc.Publish(ws, "my-blog", CleanupNone)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var user *grinderr.User
+	if !errors.As(err, &user) {
+		t.Fatalf("expected *grinderr.User, got %T", err)
+	}
+	want := "Merge failed for project 'my-blog'. Resolve conflicts in .main manually, then run 'grind save'."
+	if err.Error() != want {
+		t.Errorf("message = %q, want %q", err.Error(), want)
+	}
+	// No commit: the merge failed before any state change.
+	if len(fake.commits) != 0 {
+		t.Errorf("commits = %d, want 0", len(fake.commits))
+	}
+}
+
+func TestCancelHappyPath(t *testing.T) {
+	ws := newTestWorkspace(t)
+	addProjectEntry(t, ws, "my-blog", "")
+	addProjectWorktree(t, ws, "my-blog")
+	fake := newFakeGit()
+	svc := NewService(fake)
+
+	if err := svc.Cancel(ws, "my-blog", CleanupWorktree); err != nil {
+		t.Fatal(err)
+	}
+
+	// The entry must be marked canceled.
+	projects, err := config.ReadProjects(ws.ProjectsConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := projects.Projects["my-blog"].Status; got != "canceled" {
+		t.Errorf("Status = %q, want canceled", got)
+	}
+
+	// One commit staging only .projects.json.
+	if len(fake.commits) != 1 {
+		t.Fatalf("commits = %d, want 1", len(fake.commits))
+	}
+	c := fake.commits[0]
+	if c.message != "Cancel project: my-blog" {
+		t.Errorf("commit message = %q", c.message)
+	}
+	if len(c.paths) != 1 || c.paths[0] != ".projects.json" {
+		t.Errorf("commit paths = %v", c.paths)
+	}
+
+	// CleanupWorktree removes the worktree but keeps the branch.
+	if len(fake.removeWorktree) != 1 || fake.removeWorktree[0] != ws.ProjectWorktreePath("my-blog") {
+		t.Errorf("RemoveWorktree calls = %v", fake.removeWorktree)
+	}
+	if len(fake.deleteBranch) != 0 {
+		t.Errorf("DeleteBranch calls = %v, want none", fake.deleteBranch)
+	}
+}
+
+func TestCancelNonexistentProject(t *testing.T) {
+	ws := newTestWorkspace(t)
+	svc := NewService(newFakeGit())
+
+	err := svc.Cancel(ws, "nope", CleanupNone)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var user *grinderr.User
+	if !errors.As(err, &user) {
+		t.Fatalf("expected *grinderr.User, got %T", err)
+	}
+	if err.Error() != "Project 'nope' does not exist." {
+		t.Errorf("message = %q", err.Error())
+	}
+}
+
+func TestCancelMissingWorktree(t *testing.T) {
+	ws := newTestWorkspace(t)
+	addProjectEntry(t, ws, "my-blog", "")
+	svc := NewService(newFakeGit())
+
+	err := svc.Cancel(ws, "my-blog", CleanupNone)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	var user *grinderr.User
+	if !errors.As(err, &user) {
+		t.Fatalf("expected *grinderr.User, got %T", err)
+	}
+	if err.Error() != "Project worktree 'my-blog' does not exist." {
+		t.Errorf("message = %q", err.Error())
+	}
+}
+
+func TestPublishCleanupWorktreeOnly(t *testing.T) {
+	ws := newTestWorkspace(t)
+	addProjectEntry(t, ws, "my-blog", "")
+	addProjectWorktree(t, ws, "my-blog")
+	fake := newFakeGit()
+	svc := NewService(fake)
+
+	if err := svc.Publish(ws, "my-blog", CleanupWorktree); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.removeWorktree) != 1 || fake.removeWorktree[0] != ws.ProjectWorktreePath("my-blog") {
+		t.Errorf("RemoveWorktree calls = %v", fake.removeWorktree)
+	}
+	if len(fake.deleteBranch) != 0 {
+		t.Errorf("DeleteBranch calls = %v, want none", fake.deleteBranch)
+	}
+}
+
+func TestPublishCleanupNone(t *testing.T) {
+	ws := newTestWorkspace(t)
+	addProjectEntry(t, ws, "my-blog", "")
+	addProjectWorktree(t, ws, "my-blog")
+	fake := newFakeGit()
+	svc := NewService(fake)
+
+	if err := svc.Publish(ws, "my-blog", CleanupNone); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.removeWorktree) != 0 || len(fake.deleteBranch) != 0 {
+		t.Errorf("cleanup calls = remove:%v delete:%v, want none", fake.removeWorktree, fake.deleteBranch)
+	}
+}
+
+func TestCancelCleanupNone(t *testing.T) {
+	ws := newTestWorkspace(t)
+	addProjectEntry(t, ws, "my-blog", "")
+	addProjectWorktree(t, ws, "my-blog")
+	fake := newFakeGit()
+	svc := NewService(fake)
+
+	if err := svc.Cancel(ws, "my-blog", CleanupNone); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.removeWorktree) != 0 || len(fake.deleteBranch) != 0 {
+		t.Errorf("cleanup calls = remove:%v delete:%v, want none", fake.removeWorktree, fake.deleteBranch)
+	}
+}
+
+func TestCancelCleanupBoth(t *testing.T) {
+	ws := newTestWorkspace(t)
+	addProjectEntry(t, ws, "my-blog", "")
+	addProjectWorktree(t, ws, "my-blog")
+	fake := newFakeGit()
+	svc := NewService(fake)
+
+	if err := svc.Cancel(ws, "my-blog", CleanupBoth); err != nil {
+		t.Fatal(err)
+	}
+	// The worktree must be removed before the branch is deleted.
+	if len(fake.removeWorktree) != 1 || fake.removeWorktree[0] != ws.ProjectWorktreePath("my-blog") {
+		t.Errorf("RemoveWorktree calls = %v", fake.removeWorktree)
+	}
+	if len(fake.deleteBranch) != 1 || fake.deleteBranch[0] != "my-blog" {
+		t.Errorf("DeleteBranch calls = %v", fake.deleteBranch)
+	}
+}
+
+func TestListSkipsCanceled(t *testing.T) {
+	ws := newTestWorkspace(t)
+	projects := config.DefaultProjects()
+	projects.Projects["active"] = config.ProjectEntry{Name: "active"}
+	projects.Projects["published"] = config.ProjectEntry{Name: "published", Status: "published"}
+	projects.Projects["canceled"] = config.ProjectEntry{Name: "canceled", Status: "canceled"}
+	if err := config.WriteProjects(ws.ProjectsConfigPath(), projects); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(newFakeGit())
+
+	list, err := svc.List(ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, p := range list {
+		got = append(got, p.Name)
+	}
+	want := []string{"active", "published"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("list = %v, want %v", got, want)
+	}
+}

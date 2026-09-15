@@ -1119,3 +1119,106 @@ func TestListRemoteBranches(t *testing.T) {
 		t.Errorf("branches = %v, want [main my-blog]", branches)
 	}
 }
+
+func TestMergeBranch(t *testing.T) {
+	bareRepo, main := newBareRepoWithMain(t)
+	g := New()
+
+	// Create a feature branch with a worktree and commit work on it.
+	if err := run(bareRepo, "branch", "feature"); err != nil {
+		t.Fatal(err)
+	}
+	feature := filepath.Join(filepath.Dir(main), "feature")
+	if err := g.AddWorktree(bareRepo, feature, "feature"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(feature, "work.md"), []byte("work\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Commit(feature, "Feature work", "work.md"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := g.MergeBranch(main, "feature"); err != nil {
+		t.Fatalf("MergeBranch() error = %v", err)
+	}
+
+	// The merged file must be present in main's worktree.
+	if _, err := os.Stat(filepath.Join(main, "work.md")); err != nil {
+		t.Errorf("work.md not in main after merge: %v", err)
+	}
+
+	// --no-ff guarantees a merge commit: main's log has two commits after
+	// the initial one (the feature commit and the merge commit).
+	log, err := output(main, "log", "--oneline")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(log), "\n")
+	if len(lines) != 3 {
+		t.Errorf("main log has %d commits, want 3 (initial, feature, merge):\n%s", len(lines), log)
+	}
+	if !strings.Contains(lines[0], "Merge branch 'feature'") {
+		t.Errorf("latest commit = %q, want a merge commit", lines[0])
+	}
+}
+
+func TestRemoveWorktree(t *testing.T) {
+	bareRepo, main := newBareRepoWithMain(t)
+	g := New()
+
+	// Create a project worktree.
+	project := filepath.Join(filepath.Dir(main), "my-blog")
+	if err := g.AddWorktree(bareRepo, project, "my-blog"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".git")); err != nil {
+		t.Fatalf("worktree not created: %v", err)
+	}
+
+	if err := g.RemoveWorktree(bareRepo, project); err != nil {
+		t.Fatalf("RemoveWorktree() error = %v", err)
+	}
+
+	// The directory must be gone and the worktree must no longer be
+	// registered.
+	if _, err := os.Stat(project); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("worktree dir still exists after RemoveWorktree: %v", err)
+	}
+	list, err := output(bareRepo, "worktree", "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(list, "my-blog") {
+		t.Errorf("worktree list still contains my-blog:\n%s", list)
+	}
+}
+
+func TestDeleteBranch(t *testing.T) {
+	bareRepo, main := newBareRepoWithMain(t)
+	g := New()
+
+	// A branch that is NOT checked out in any worktree can be deleted.
+	if err := run(bareRepo, "branch", "feature"); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.DeleteBranch(bareRepo, "feature"); err != nil {
+		t.Fatalf("DeleteBranch() error = %v", err)
+	}
+	if _, err := output(bareRepo, "rev-parse", "--verify", "feature"); err == nil {
+		t.Error("branch still exists after DeleteBranch")
+	}
+
+	// Regression guard: deleting a branch that IS checked out in a worktree
+	// must fail — publish/cancel only delete after removing the worktree.
+	if err := run(bareRepo, "branch", "checked-out"); err != nil {
+		t.Fatal(err)
+	}
+	wt := filepath.Join(filepath.Dir(main), "checked-out")
+	if err := g.AddWorktree(bareRepo, wt, "checked-out"); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.DeleteBranch(bareRepo, "checked-out"); err == nil {
+		t.Error("DeleteBranch() = nil error, want failure for checked-out branch")
+	}
+}

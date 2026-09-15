@@ -59,6 +59,13 @@ func (s *Service) Status(ws *workspace.Workspace) ([]Row, error) {
 	now := time.Now()
 	rows := make([]Row, 0, len(projects.Projects))
 	for name, entry := range projects.Projects {
+		// Canceled projects disappear from the dashboard, matching v1 where
+		// cancel removed the worktree and the worktree-driven view naturally
+		// dropped the project. Published projects stay — their worktree is
+		// preserved.
+		if entry.Status == "canceled" {
+			continue
+		}
 		row, err := s.rowFor(ws, name, entry, now)
 		if err != nil {
 			return nil, err

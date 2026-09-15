@@ -63,6 +63,12 @@ func (f *fakeGit) FastForwardRef(repoPath, branch string) error { return nil }
 
 func (f *fakeGit) ListRemoteBranches(repoPath string) ([]string, error) { return nil, nil }
 
+func (f *fakeGit) MergeBranch(worktreePath, branch string) error { return nil }
+
+func (f *fakeGit) RemoveWorktree(repoPath, worktreePath string) error { return nil }
+
+func (f *fakeGit) DeleteBranch(repoPath, branch string) error { return nil }
+
 // Ensure the stub satisfies the interface the service depends on.
 var _ git.Git = (*fakeGit)(nil)
 
@@ -308,5 +314,29 @@ func TestStatusMissingProjectsFile(t *testing.T) {
 	}
 	if !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("error = %v, want an error wrapping os.ErrNotExist", err)
+	}
+}
+
+func TestStatusSkipsCanceled(t *testing.T) {
+	projects := config.ProjectsConfig{
+		Version: 1,
+		Projects: map[string]config.ProjectEntry{
+			"active":    {Name: "active"},
+			"published": {Name: "published", Status: "published"},
+			"canceled":  {Name: "canceled", Status: "canceled"},
+		},
+	}
+	ws := newTestWorkspace(t, projects)
+	svc := NewService(&fakeGit{})
+
+	rows, err := svc.Status(ws)
+	if err != nil {
+		t.Fatalf("Status() error = %v", err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2 (canceled hidden)", len(rows))
+	}
+	if rows[0].Name != "active" || rows[1].Name != "published" {
+		t.Errorf("rows = %v, want [active published]", []string{rows[0].Name, rows[1].Name})
 	}
 }

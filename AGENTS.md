@@ -192,7 +192,7 @@ and what's next.
 | 6 | Status (`wwd`) | ✅ done |
 | 7 | Push/pull | ✅ done |
 | 8 | Config | ✅ done |
-| 9 | Publish/cancel | ⬜ |
+| 9 | Publish/cancel | ✅ done |
 | 10 | Invoice | ⬜ |
 | 11 | Migrate (v1 workspace conversion) | ⬜ |
 

@@ -93,6 +93,21 @@ type Git interface {
 	// ListRemoteBranches returns the remote branch names
 	// (refs/remotes/origin/*, excluding HEAD).
 	ListRemoteBranches(repoPath string) ([]string, error)
+	// MergeBranch runs `git merge --no-ff <branch>` in the worktree, merging
+	// the branch into the worktree's current branch. publish uses it to bring
+	// a project branch into the default branch. --no-ff guarantees a visible
+	// merge commit in history even when the merge could fast-forward.
+	MergeBranch(worktreePath, branch string) error
+	// RemoveWorktree runs `git worktree remove --force <path>` in the bare
+	// repo. publish/cancel use it after the user chose to clean up; --force is
+	// safe because the cleanup prompt already warned about losing uncommitted
+	// work.
+	RemoveWorktree(repoPath, worktreePath string) error
+	// DeleteBranch runs `git branch -D <branch>` in the bare repo, deleting
+	// the branch without checking whether it is merged. It is only called
+	// AFTER the worktree is removed — git refuses to delete a branch that is
+	// checked out in a worktree.
+	DeleteBranch(repoPath, branch string) error
 }
 
 // PushError is returned by PushAll when git push fails. It carries git's

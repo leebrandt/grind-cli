@@ -51,6 +51,15 @@ type fakeGit struct {
 	ffRef []string
 	// addWorktree records every AddWorktree call.
 	addWorktree [][]string
+	// dirtyWorktrees maps worktree path → dirty, for per-worktree control
+	// in publish/cancel tests.
+	dirtyWorktrees map[string]bool
+	// mergeBranch records every MergeBranch call.
+	mergeBranch []string
+	// removeWorktree records every RemoveWorktree call.
+	removeWorktree []string
+	// deleteBranch records every DeleteBranch call.
+	deleteBranch []string
 }
 
 type fakeCommit struct {
@@ -84,6 +93,9 @@ func (f *fakeGit) CreateBranch(repoPath, branch string) error {
 }
 
 func (f *fakeGit) HasChanges(worktreePath string) (bool, error) {
+	if f.dirtyWorktrees != nil {
+		return f.dirtyWorktrees[worktreePath], nil
+	}
 	return f.hasChanges, nil
 }
 
@@ -141,6 +153,21 @@ func (f *fakeGit) FastForwardRef(repoPath, branch string) error {
 
 func (f *fakeGit) ListRemoteBranches(repoPath string) ([]string, error) {
 	return f.remoteBranches, nil
+}
+
+func (f *fakeGit) MergeBranch(worktreePath, branch string) error {
+	f.mergeBranch = append(f.mergeBranch, branch)
+	return nil
+}
+
+func (f *fakeGit) RemoveWorktree(repoPath, worktreePath string) error {
+	f.removeWorktree = append(f.removeWorktree, worktreePath)
+	return nil
+}
+
+func (f *fakeGit) DeleteBranch(repoPath, branch string) error {
+	f.deleteBranch = append(f.deleteBranch, branch)
+	return nil
 }
 
 // LastCommitDate returns the branch's recorded commit time, or the zero
@@ -414,8 +441,8 @@ func TestVersionFlag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "0.90.6\n" {
-		t.Errorf("output = %q, want %q", out, "0.90.6\n")
+	if out != "0.90.7\n" {
+		t.Errorf("output = %q, want %q", out, "0.90.7\n")
 	}
 }
 
@@ -1529,6 +1556,391 @@ func TestPushCommandFailureIsUserError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "fatal: unable to access") {
 		t.Errorf("error = %q, want git's stderr", err.Error())
+	}
+}
+
+// executeWithIn runs the root command with the given git fake, stdin, and
+// args, returning stdout. Needed for commands that prompt (publish/cancel).
+func executeWithIn(t *testing.T, fake *fakeGit, in io.Reader, args ...string) (string, error) {
+	t.Helper()
+	root := NewRootCmd(fake)
+	var buf bytes.Buffer
+	root.SetOut(&buf)
+	root.SetErr(&buf)
+	root.SetIn(in)
+	root.SetArgs(args)
+	err := root.Execute()
+	return buf.String(), err
+}
+
+func TestPublishCommandHappyPath(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+
+	out, err := execute(t, fake, "publish", "my-blog", "-y")
+	if err != nil {
+		t.Fatalf("publish my-blog -y: %v", err)
+	}
+	if !strings.Contains(out, "Published project 'my-blog'. Draft exported to published/my-blog.md.") {
+		t.Errorf("output = %q", out)
+	}
+
+	// The merge must have run.
+	if len(fake.mergeBranch) != 1 || fake.mergeBranch[0] != "my-blog" {
+		t.Errorf("MergeBranch calls = %v", fake.mergeBranch)
+	}
+
+	// The draft must exist in .main/published.
+	draft, err := os.ReadFile(filepath.Join(".main", "published", "my-blog.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(draft), "title: My Blog\n") {
+		t.Errorf("draft missing title:\n%s", draft)
+	}
+	if !strings.Contains(string(draft), "status: published\n") {
+		t.Errorf("draft missing status:\n%s", draft)
+	}
+
+	// The entry must be marked published.
+	projects, err := config.ReadProjects(filepath.Join(".main", ".projects.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := projects.Projects["my-blog"].Status; got != "published" {
+		t.Errorf("Status = %q, want published", got)
+	}
+
+	// -y means full cleanup: worktree then branch.
+	if len(fake.removeWorktree) != 1 || filepath.Base(fake.removeWorktree[0]) != "my-blog" {
+		t.Errorf("RemoveWorktree calls = %v", fake.removeWorktree)
+	}
+	if len(fake.deleteBranch) != 1 || fake.deleteBranch[0] != "my-blog" {
+		t.Errorf("DeleteBranch calls = %v", fake.deleteBranch)
+	}
+}
+
+func TestPublishCommandPromptKeepBoth(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+
+	out, err := executeWithIn(t, fake, strings.NewReader("n\n"), "publish", "my-blog")
+	if err != nil {
+		t.Fatalf("publish my-blog: %v", err)
+	}
+	if !strings.Contains(out, "Delete worktree and/or branch for 'my-blog'? [w/x/n] ") {
+		t.Errorf("output missing prompt: %q", out)
+	}
+	if !strings.Contains(out, "Published project 'my-blog'.") {
+		t.Errorf("output = %q", out)
+	}
+	// n keeps both the worktree and the branch.
+	if len(fake.removeWorktree) != 0 || len(fake.deleteBranch) != 0 {
+		t.Errorf("cleanup calls = remove:%v delete:%v, want none", fake.removeWorktree, fake.deleteBranch)
+	}
+}
+
+func TestPublishCommandPromptInvalidThenValid(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+
+	// "z" is invalid, so the prompt repeats; "x" then deletes both.
+	out, err := executeWithIn(t, fake, strings.NewReader("z\nx\n"), "publish", "my-blog")
+	if err != nil {
+		t.Fatalf("publish my-blog: %v", err)
+	}
+	if strings.Count(out, "Delete worktree and/or branch") != 2 {
+		t.Errorf("prompt shown %d times, want 2:\n%s", strings.Count(out, "Delete worktree and/or branch"), out)
+	}
+	if len(fake.removeWorktree) != 1 || len(fake.deleteBranch) != 1 {
+		t.Errorf("cleanup calls = remove:%v delete:%v, want both once", fake.removeWorktree, fake.deleteBranch)
+	}
+}
+
+func TestPublishCommandPromptEOFDefaultsToKeep(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+
+	// EOF (empty reader) defaults to n: nothing is deleted.
+	out, err := executeWithIn(t, fake, strings.NewReader(""), "publish", "my-blog")
+	if err != nil {
+		t.Fatalf("publish my-blog: %v", err)
+	}
+	if !strings.Contains(out, "Published project 'my-blog'.") {
+		t.Errorf("output = %q", out)
+	}
+	if len(fake.removeWorktree) != 0 || len(fake.deleteBranch) != 0 {
+		t.Errorf("cleanup calls = remove:%v delete:%v, want none", fake.removeWorktree, fake.deleteBranch)
+	}
+}
+
+func TestPublishCommandDirtyMain(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+	mainAbs, err := filepath.Abs(".main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake.dirtyWorktrees = map[string]bool{mainAbs: true}
+
+	_, err = execute(t, fake, "publish", "my-blog", "-y")
+	if err == nil {
+		t.Fatal("publish with dirty .main: expected error")
+	}
+	if err.Error() != "Main worktree has uncommitted changes. Run 'grind save' to commit them." {
+		t.Errorf("error = %q", err.Error())
+	}
+	if len(fake.mergeBranch) != 0 {
+		t.Errorf("MergeBranch calls = %v, want 0", fake.mergeBranch)
+	}
+}
+
+func TestPublishCommandDirtyProject(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+	projAbs, err := filepath.Abs("my-blog")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake.dirtyWorktrees = map[string]bool{projAbs: true}
+
+	_, err = execute(t, fake, "publish", "my-blog", "-y")
+	if err == nil {
+		t.Fatal("publish with dirty project worktree: expected error")
+	}
+	if err.Error() != "Project 'my-blog' has uncommitted changes. Run 'grind save my-blog' to commit them." {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestPublishCommandUnknownProject(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	_, err := execute(t, fake, "publish", "nope", "-y")
+	if err == nil {
+		t.Fatal("publish nope: expected error")
+	}
+	if err.Error() != "Project 'nope' does not exist." {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestPublishCommandMissingWorktree(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+	if err := os.RemoveAll("my-blog"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := execute(t, fake, "publish", "my-blog", "-y")
+	if err == nil {
+		t.Fatal("publish with missing worktree: expected error")
+	}
+	if err.Error() != "Project worktree 'my-blog' does not exist." {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestCancelCommandHappyPath(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+
+	out, err := execute(t, fake, "cancel", "my-blog", "-y")
+	if err != nil {
+		t.Fatalf("cancel my-blog -y: %v", err)
+	}
+	if !strings.Contains(out, "Project 'my-blog' cancelled.") {
+		t.Errorf("output = %q", out)
+	}
+
+	// The entry must be marked canceled.
+	projects, err := config.ReadProjects(filepath.Join(".main", ".projects.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := projects.Projects["my-blog"].Status; got != "canceled" {
+		t.Errorf("Status = %q, want canceled", got)
+	}
+
+	// -y means full cleanup: worktree then branch.
+	if len(fake.removeWorktree) != 1 || filepath.Base(fake.removeWorktree[0]) != "my-blog" {
+		t.Errorf("RemoveWorktree calls = %v", fake.removeWorktree)
+	}
+	if len(fake.deleteBranch) != 1 || fake.deleteBranch[0] != "my-blog" {
+		t.Errorf("DeleteBranch calls = %v", fake.deleteBranch)
+	}
+}
+
+func TestCancelCommandPromptWorktreeOnly(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+
+	out, err := executeWithIn(t, fake, strings.NewReader("w\n"), "cancel", "my-blog")
+	if err != nil {
+		t.Fatalf("cancel my-blog: %v", err)
+	}
+	if !strings.Contains(out, "Delete worktree and/or branch for 'my-blog'? [w/x/n] ") {
+		t.Errorf("output missing prompt: %q", out)
+	}
+	if !strings.Contains(out, "Project 'my-blog' cancelled.") {
+		t.Errorf("output = %q", out)
+	}
+	// w removes the worktree but keeps the branch.
+	if len(fake.removeWorktree) != 1 {
+		t.Errorf("RemoveWorktree calls = %v, want 1", fake.removeWorktree)
+	}
+	if len(fake.deleteBranch) != 0 {
+		t.Errorf("DeleteBranch calls = %v, want 0", fake.deleteBranch)
+	}
+}
+
+func TestCancelCommandInsideWorktree(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+
+	// Stand inside the project worktree: cancel must refuse BEFORE the
+	// prompt, so no input is consumed.
+	if err := os.Chdir("my-blog"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := executeWithIn(t, fake, strings.NewReader("x\n"), "cancel", "my-blog")
+	if err == nil {
+		t.Fatal("cancel from inside worktree: expected error")
+	}
+	if err.Error() != "You are inside this project's worktree. Run 'grind cancel my-blog' from the workspace root." {
+		t.Errorf("error = %q", err.Error())
+	}
+	// No cleanup and no state change.
+	if len(fake.removeWorktree) != 0 || len(fake.deleteBranch) != 0 {
+		t.Errorf("cleanup calls = remove:%v delete:%v, want none", fake.removeWorktree, fake.deleteBranch)
+	}
+	projects, err := config.ReadProjects(filepath.Join("..", ".main", ".projects.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := projects.Projects["my-blog"].Status; got != "" {
+		t.Errorf("Status = %q, want empty (not canceled)", got)
+	}
+}
+
+func TestCancelCommandUnknownProject(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	_, err := execute(t, fake, "cancel", "nope", "-y")
+	if err == nil {
+		t.Fatal("cancel nope: expected error")
+	}
+	if err.Error() != "Project 'nope' does not exist." {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestCancelCommandMissingWorktree(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+	if err := os.RemoveAll("my-blog"); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := execute(t, fake, "cancel", "my-blog", "-y")
+	if err == nil {
+		t.Fatal("cancel with missing worktree: expected error")
+	}
+	if err.Error() != "Project worktree 'my-blog' does not exist." {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestPublishCommandPromptWorktreeOnly(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+
+	out, err := executeWithIn(t, fake, strings.NewReader("w\n"), "publish", "my-blog")
+	if err != nil {
+		t.Fatalf("publish my-blog: %v", err)
+	}
+	if !strings.Contains(out, "Published project 'my-blog'.") {
+		t.Errorf("output = %q", out)
+	}
+	// w removes the worktree but keeps the branch.
+	if len(fake.removeWorktree) != 1 {
+		t.Errorf("RemoveWorktree calls = %v, want 1", fake.removeWorktree)
+	}
+	if len(fake.deleteBranch) != 0 {
+		t.Errorf("DeleteBranch calls = %v, want 0", fake.deleteBranch)
+	}
+}
+
+func TestCancelCommandPromptKeepBoth(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+
+	out, err := executeWithIn(t, fake, strings.NewReader("n\n"), "cancel", "my-blog")
+	if err != nil {
+		t.Fatalf("cancel my-blog: %v", err)
+	}
+	if !strings.Contains(out, "Project 'my-blog' cancelled.") {
+		t.Errorf("output = %q", out)
+	}
+	// n keeps both the worktree and the branch.
+	if len(fake.removeWorktree) != 0 || len(fake.deleteBranch) != 0 {
+		t.Errorf("cleanup calls = remove:%v delete:%v, want none", fake.removeWorktree, fake.deleteBranch)
+	}
+}
+
+func TestPublishCommandNotInWorkspace(t *testing.T) {
+	// Run from a temp dir that is not inside a grind workspace.
+	dir := t.TempDir()
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldDir)
+
+	_, err = execute(t, &fakeGit{}, "publish", "my-blog", "-y")
+	if err == nil {
+		t.Fatal("publish outside workspace: expected error")
+	}
+	if err.Error() != "Not in a grind workspace." {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestCancelCommandNotInWorkspace(t *testing.T) {
+	dir := t.TempDir()
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldDir)
+
+	_, err = execute(t, &fakeGit{}, "cancel", "my-blog", "-y")
+	if err == nil {
+		t.Fatal("cancel outside workspace: expected error")
+	}
+	if err.Error() != "Not in a grind workspace." {
+		t.Errorf("error = %q", err.Error())
 	}
 }
 

@@ -66,6 +66,12 @@ func (f *fakeGit) FastForwardRef(repoPath, branch string) error { return nil }
 
 func (f *fakeGit) ListRemoteBranches(repoPath string) ([]string, error) { return nil, nil }
 
+func (f *fakeGit) MergeBranch(worktreePath, branch string) error { return nil }
+
+func (f *fakeGit) RemoveWorktree(repoPath, worktreePath string) error { return nil }
+
+func (f *fakeGit) DeleteBranch(repoPath, branch string) error { return nil }
+
 // Ensure the git package is linked in tests that reference the interface.
 var _ git.Git = (*fakeGit)(nil)
 

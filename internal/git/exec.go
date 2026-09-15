@@ -287,6 +287,30 @@ func (g *execGit) ListRemoteBranches(repoPath string) ([]string, error) {
 	return branches, nil
 }
 
+// MergeBranch runs `git merge --no-ff <branch>` in the worktree. publish
+// uses it to bring a project branch into the default branch. --no-ff
+// guarantees a visible merge commit in history even when the merge could
+// fast-forward, so the publication is always a distinct, reviewable step.
+func (g *execGit) MergeBranch(worktreePath, branch string) error {
+	return run(worktreePath, "merge", "--no-ff", branch)
+}
+
+// RemoveWorktree runs `git worktree remove --force <path>` in the bare
+// repo. publish/cancel use it after the user chose to clean up; --force is
+// safe because the cleanup prompt already warned about losing uncommitted
+// work.
+func (g *execGit) RemoveWorktree(repoPath, worktreePath string) error {
+	return run(repoPath, "worktree", "remove", "--force", worktreePath)
+}
+
+// DeleteBranch runs `git branch -D <branch>` in the bare repo, deleting the
+// branch without checking whether it is merged. It is only called AFTER the
+// worktree is removed — git refuses to delete a branch that is checked out
+// in a worktree.
+func (g *execGit) DeleteBranch(repoPath, branch string) error {
+	return run(repoPath, "branch", "-D", branch)
+}
+
 // LastCommitDate returns the time of the branch's most recent commit.
 // `git log <branch> -1 --format=%aI` prints the author date in strict ISO
 // 8601, which time.RFC3339 parses directly.

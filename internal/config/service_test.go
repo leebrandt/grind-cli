@@ -74,6 +74,12 @@ func (f *fakeGit) FastForwardRef(repoPath, branch string) error { return nil }
 
 func (f *fakeGit) ListRemoteBranches(repoPath string) ([]string, error) { return nil, nil }
 
+func (f *fakeGit) MergeBranch(worktreePath, branch string) error { return nil }
+
+func (f *fakeGit) RemoveWorktree(repoPath, worktreePath string) error { return nil }
+
+func (f *fakeGit) DeleteBranch(repoPath, branch string) error { return nil }
+
 // Ensure the fake satisfies the interface the service depends on.
 var _ git.Git = (*fakeGit)(nil)
 
@@ -569,6 +575,7 @@ func TestProjectList(t *testing.T) {
 		{Key: "deadline", Value: "2026-12-31"},
 		{Key: "longTerm", Value: "false"},
 		{Key: "repo", Value: "git@example.com:repo.git"},
+		{Key: "status", Value: "active"},
 		{Key: "type", Value: "blog"},
 	}
 	if !reflect.DeepEqual(entries, want) {
@@ -591,6 +598,44 @@ func TestProjectListShowsLongTermEffectiveValue(t *testing.T) {
 		if e.Key == "longTerm" && e.Value != "true" {
 			t.Errorf("longTerm = %q, want true", e.Value)
 		}
+	}
+}
+
+func TestProjectListShowsStatusEffectiveValue(t *testing.T) {
+	paths, fake := newTestPaths(t)
+	projects := projectWith("my-blog")
+	projects.Projects["my-blog"] = ProjectEntry{Name: "my-blog", Status: "published"}
+	writeProjects(t, paths, projects)
+	svc := NewService(fake)
+
+	entries, err := svc.ProjectList(paths, "my-blog")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Key == "status" && e.Value != "published" {
+			t.Errorf("status = %q, want published", e.Value)
+		}
+	}
+}
+
+func TestProjectSetRefusesStatus(t *testing.T) {
+	paths, fake := newTestPaths(t)
+	projects := projectWith("my-blog")
+	projects.Projects["my-blog"] = ProjectEntry{Name: "my-blog"}
+	writeProjects(t, paths, projects)
+	svc := NewService(fake)
+
+	err := svc.ProjectSet(paths, "my-blog", "status", "published")
+	if err == nil {
+		t.Fatal("ProjectSet(status) = nil error, want refusal")
+	}
+	var user *grinderr.User
+	if !errors.As(err, &user) {
+		t.Fatalf("error = %T, want *grinderr.User", err)
+	}
+	if !strings.Contains(err.Error(), "Invalid key for project config: status") {
+		t.Errorf("error = %q, want it to mention the invalid status key", err.Error())
 	}
 }
 

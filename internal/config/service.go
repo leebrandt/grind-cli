@@ -291,13 +291,19 @@ func appendMyEntries(entries []Entry, my *MyConfig) []Entry {
 }
 
 // flattenProject turns a ProjectEntry into sorted key=value entries.
-// longTerm always shows its effective value (false when unset); the other
-// keys are omitted when empty.
+// longTerm and status always show their effective values (false / "active"
+// when unset); the other keys are omitted when empty. status is read-only —
+// lifecycle verbs own it, so it is NOT in projectKeys.
 func flattenProject(entry ProjectEntry) []Entry {
+	status := entry.Status
+	if status == "" {
+		status = "active"
+	}
 	entries := []Entry{
 		{Key: "billing.roundTo", Value: entry.Billing.RoundTo},
 		{Key: "billing.rate", Value: formatFloat(entry.Billing.Rate)},
 		{Key: "longTerm", Value: strconv.FormatBool(entry.LongTerm)},
+		{Key: "status", Value: status},
 	}
 	if entry.Type != "" {
 		entries = append(entries, Entry{Key: "type", Value: entry.Type})
