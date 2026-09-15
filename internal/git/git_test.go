@@ -1153,13 +1153,34 @@ func TestMergeBranch(t *testing.T) {
 		t.Error(".idea exists at root after merge, want it only under projects/my-blog/")
 	}
 
-	// The merge commit must exist.
+	// The merge commit must exist and say what it merged.
 	log, err := output(main, "log", "--oneline", "-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(log, "Publish project: my-blog") {
-		t.Errorf("latest commit = %q, want 'Publish project: my-blog'", strings.TrimSpace(log))
+	if !strings.Contains(log, "Merge project 'my-blog' into main") {
+		t.Errorf("latest commit = %q, want 'Merge project 'my-blog' into main'", strings.TrimSpace(log))
+	}
+
+	// The merge commit must have two parents: the previous main tip and the
+	// project branch. A single-parent commit would lose the branch reference;
+	// no parents would orphan the entire main history.
+	parents, err := output(main, "log", "-1", "--format=%p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(strings.Fields(parents)); n != 2 {
+		t.Errorf("merge commit has %d parents, want 2. parents field: %q", n, parents)
+	}
+
+	// Prior history must be reachable — the merge must not orphan the initial
+	// commit (which would break `git push` and `git pull`).
+	fullLog, err := output(main, "log", "--oneline")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(fullLog, "Initial commit") {
+		t.Errorf("history lost after merge — 'Initial commit' not reachable:\n%s", fullLog)
 	}
 
 	// The worktree must be clean: the merge commit captured the merged tree.
@@ -1299,6 +1320,68 @@ func TestMergeBranchOverwrite(t *testing.T) {
 	}
 	if string(body) != "# v2\n" {
 		t.Errorf("overwrite .idea = %q, want %q", body, "# v2\n")
+	}
+}
+
+func TestMergeBranchDeletesRemovedFiles(t *testing.T) {
+	bareRepo, main := newBareRepoWithMain(t)
+	g := New()
+
+	// Publish a project with two files.
+	if err := g.CreateBranch(bareRepo, "my-blog"); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(filepath.Dir(main), "my-blog")
+	if err := g.AddWorktree(bareRepo, project, "my-blog"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, ".idea"), []byte("# My Blog\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, "part1.md"), []byte("Part 1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Commit(project, "Add idea and part 1", ".idea", "part1.md"); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.MergeBranch(main, "my-blog"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Both files must be in main.
+	if _, err := os.Stat(filepath.Join(main, "projects", "my-blog", "part1.md")); err != nil {
+		t.Fatalf("part1.md not in main after first merge: %v", err)
+	}
+
+	// Delete part1.md on the branch and re-publish.
+	if err := os.Remove(filepath.Join(project, "part1.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Commit(project, "Drop part 1", "part1.md"); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.MergeBranch(main, "my-blog"); err != nil {
+		t.Fatal(err)
+	}
+
+	// part1.md must be gone from main — the replace semantics must remove
+	// files that no longer exist on the branch.
+	if _, err := os.Stat(filepath.Join(main, "projects", "my-blog", "part1.md")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("part1.md still in main after second merge, want deleted")
+	}
+
+	// .idea must still be there.
+	if _, err := os.Stat(filepath.Join(main, "projects", "my-blog", ".idea")); err != nil {
+		t.Errorf(".idea missing after second merge: %v", err)
+	}
+
+	// Worktree must be clean.
+	status, err := output(main, "status", "--porcelain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(status) != "" {
+		t.Errorf("worktree not clean after deletion merge, status:\n%s", status)
 	}
 }
 

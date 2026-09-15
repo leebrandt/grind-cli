@@ -1582,25 +1582,13 @@ func TestPublishCommandHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("publish my-blog -y: %v", err)
 	}
-	if !strings.Contains(out, "Published project 'my-blog'. Draft exported to published/my-blog.md.") {
+	if !strings.Contains(out, "Published project 'my-blog'.") {
 		t.Errorf("output = %q", out)
 	}
 
 	// The merge must have run.
 	if len(fake.mergeBranch) != 1 || fake.mergeBranch[0] != "my-blog" {
 		t.Errorf("MergeBranch calls = %v", fake.mergeBranch)
-	}
-
-	// The draft must exist in .main/published.
-	draft, err := os.ReadFile(filepath.Join(".main", "published", "my-blog.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(draft), "title: My Blog\n") {
-		t.Errorf("draft missing title:\n%s", draft)
-	}
-	if !strings.Contains(string(draft), "status: published\n") {
-		t.Errorf("draft missing status:\n%s", draft)
 	}
 
 	// The entry must be marked published.

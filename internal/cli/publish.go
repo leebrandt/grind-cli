@@ -9,12 +9,11 @@ import (
 )
 
 // newPublishCmd builds `grind publish <project> [-y]`, which merges the
-// project branch into the default branch, exports the final draft to
-// published/, and marks the project published.
+// project branch into the default branch and marks the project published.
 func newPublishCmd(svc *projects.Service) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "publish <project>",
-		Short: "Merge a project into the default branch and export a final draft",
+		Short: "Merge a project into the default branch and mark it published",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ws, err := workspace.Require(".")
@@ -33,7 +32,7 @@ func newPublishCmd(svc *projects.Service) *cobra.Command {
 				return err
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Published project '%s'. Draft exported to published/%s.md.\n", name, name)
+			fmt.Fprintf(cmd.OutOrStdout(), "Published project '%s'.\n", name)
 			return nil
 		},
 	}

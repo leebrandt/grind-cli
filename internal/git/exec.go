@@ -307,48 +307,50 @@ func (g *execGit) MergeBranch(worktreePath, branch string) error {
 		return nil // already merged at the same tree, no-op
 	}
 
-	// Start from the current HEAD tree.
+	// Build the merged tree in the index: start from HEAD's tree, drop any
+	// previous projects/<branch>/ subtree, then read the branch's tree under
+	// that prefix. The branch's files live at the worktree root, so the
+	// prefix is what places them in the project's own folder on main.
 	baseTree, err := output(worktreePath, "rev-parse", "HEAD^{tree}")
 	if err != nil {
 		return grinderr.WrapSystem(err, "resolve HEAD tree")
 	}
-
-	// Reset the index to the base tree, then remove any old
-	// projects/<branch>/ entries so the prefix read does not collide.
-	if _, stderr, err := outputFull(worktreePath, "read-tree", baseTree); err != nil {
-		return grinderr.WrapSystem(err, "read-tree base: %s", stderr)
+	if err := run(worktreePath, "read-tree", baseTree); err != nil {
+		return grinderr.WrapSystem(err, "load HEAD tree into index")
 	}
-	if _, stderr, err := outputFull(worktreePath, "rm", "-r", "--cached", "--ignore-unmatch", "projects/"+branch); err != nil {
-		return grinderr.WrapSystem(err, "rm cached subtree: %s", stderr)
+	// --ignore-unmatch makes the removal a no-op on the first publish, when
+	// projects/<branch>/ does not exist yet. We use `git rm` (not
+	// `--cached`) so the file is removed from BOTH the index and the
+	// working tree. --cached would leave stale files on disk that
+	// `reset --hard` does not clean up (they become untracked). Removing
+	// first gives REPLACE semantics: main's copy of the project always
+	// mirrors the branch, so a file deleted on the branch disappears from
+	// main too.
+	if err := run(worktreePath, "rm", "-r", "--ignore-unmatch", "projects/"+branch); err != nil {
+		return grinderr.WrapSystem(err, "remove old projects/%s", branch)
 	}
-
-	// Read the branch's tree into the index under the projects/<branch>/
-	// prefix. No -u flag: checkout-index updates the working tree below.
-	if _, stderr, err := outputFull(worktreePath, "read-tree", "--prefix=projects/"+branch+"/", branch); err != nil {
-		return grinderr.WrapSystem(err, "read-tree prefix: %s", stderr)
-	}
-
-	// Update the working tree to match the index.
-	if err := run(worktreePath, "checkout-index", "-f", "-a"); err != nil {
-		return grinderr.WrapSystem(err, "checkout-index")
+	if err := run(worktreePath, "read-tree", "--prefix=projects/"+branch+"/", branch); err != nil {
+		return grinderr.WrapSystem(err, "read branch %s under projects/%s/", branch, branch)
 	}
 
-	// Write the index to a tree object — this captures the merged state
-	// (base tree + branch subtree at projects/<branch>/).
+	// Write the index as a tree, then commit it with two parents: the
+	// previous main tip and the project branch. A real merge commit keeps
+	// the publication visible in history (git log --graph) and preserves the
+	// project branch's commits even after the branch is deleted.
 	newTree, err := output(worktreePath, "write-tree")
 	if err != nil {
-		return grinderr.WrapSystem(err, "write-tree")
+		return grinderr.WrapSystem(err, "write merged tree")
+	}
+	commitHash, err := output(worktreePath,
+		"commit-tree", newTree, "-p", "HEAD", "-p", branch, "-m", "Merge project '"+branch+"' into main")
+	if err != nil {
+		return grinderr.WrapSystem(err, "create merge commit")
 	}
 
-	// Commit the result.
-	commitHash, err := output(worktreePath,
-		"-c", "user.name=grind",
-		"-c", "user.email=grind@localhost",
-		"commit-tree", newTree, "-m", "Publish project: "+branch)
-	if err != nil {
-		return grinderr.WrapSystem(err, "commit-tree")
-	}
-	return run(worktreePath, "update-ref", "HEAD", commitHash)
+	// reset --hard moves HEAD to the merge commit and makes the working tree
+	// match it exactly — including deleting files the new tree no longer
+	// contains. Safe because publish verifies both worktrees are clean first.
+	return run(worktreePath, "reset", "--hard", commitHash)
 }
 
 // RemoveWorktree runs `git worktree remove --force <path>` in the bare

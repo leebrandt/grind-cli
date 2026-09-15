@@ -243,9 +243,10 @@ func (s *Service) Require(ws *workspace.Workspace, name string) (*config.Project
 	return &entry, err
 }
 
-// Publish merges the project branch into the default branch, exports the
-// final draft to published/, and marks the project published. It requires
-// both worktrees to be clean so the merge is safe and .main stays clean.
+// Publish merges the project branch into the default branch and marks
+// the project published. The merge places the project's work product
+// under projects/<name>/ on the default branch. It requires both
+// worktrees to be clean so the merge is safe and .main stays clean.
 // cleanup is applied AFTER the publish commit: the work is in main, so
 // removing the worktree and/or branch loses nothing.
 func (s *Service) Publish(ws *workspace.Workspace, name string, cleanup Cleanup) error {
@@ -288,17 +289,22 @@ func (s *Service) Publish(ws *workspace.Workspace, name string, cleanup Cleanup)
 		return grinderr.WrapSystem(err, "merge project '%s' into main", name)
 	}
 
-	draftPath, err := s.writeDraft(ws, entry, worktreePath)
-	if err != nil {
-		return err
-	}
-
 	entry.Status = "published"
 	if err := writeEntry(ws, name, *entry); err != nil {
 		return err
 	}
-	if err := s.Git.Commit(ws.MainWorktree, "Publish project: "+name, ".projects.json", draftPath); err != nil {
+	// Re-publishing can leave .projects.json unchanged: when the project is
+	// already published, the status write is a no-op. Skip the commit
+	// instead of failing with git's "nothing to commit". The merge already
+	// captured the branch change.
+	projectsClean, err := s.Git.IsPathClean(ws.MainWorktree, ".projects.json")
+	if err != nil {
 		return err
+	}
+	if !projectsClean {
+		if err := s.Git.Commit(ws.MainWorktree, "Publish project: "+name, ".projects.json"); err != nil {
+			return err
+		}
 	}
 
 	return s.applyCleanup(ws, name, cleanup)
@@ -342,59 +348,6 @@ func (s *Service) Cancel(ws *workspace.Workspace, name string, cleanup Cleanup) 
 	}
 
 	return s.applyCleanup(ws, name, cleanup)
-}
-
-// writeDraft builds the final-draft markdown file for a project and writes
-// it to published/<name>.md in the main worktree. It returns the path
-// relative to .main so the caller can stage exactly that file.
-//
-// The body is the project's .idea file — the founding document the user
-// edits as the work product. If .idea is missing (Create always seeds it,
-// but a hand-edited workspace may not have one), the idea title from
-// .projects.json is the fallback.
-func (s *Service) writeDraft(ws *workspace.Workspace, entry *config.ProjectEntry, worktreePath string) (string, error) {
-	body, err := os.ReadFile(filepath.Join(worktreePath, ".idea"))
-	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return "", grinderr.WrapSystem(err, "read .idea file in %s", worktreePath)
-		}
-		body = []byte(entry.Idea)
-	}
-
-	title := entry.Idea
-	if title == "" {
-		title = entry.Name
-	}
-
-	// The date is LOCAL, not UTC — the same decision as deadlines and due
-	// dates, so "published today" matches the user's calendar.
-	var b strings.Builder
-	b.WriteString("---\n")
-	fmt.Fprintf(&b, "title: %s\n", title)
-	if entry.Type != "" {
-		fmt.Fprintf(&b, "type: %s\n", entry.Type)
-	}
-	fmt.Fprintf(&b, "date: %s\n", time.Now().Format("2006-01-02"))
-	cfg, err := readConfig(ws)
-	if err != nil {
-		return "", err
-	}
-	if cfg.My != nil && cfg.My.Name != "" {
-		fmt.Fprintf(&b, "author: %s\n", cfg.My.Name)
-	}
-	b.WriteString("status: published\n")
-	b.WriteString("---\n\n")
-	b.Write(body)
-	if !strings.HasSuffix(b.String(), "\n") {
-		b.WriteByte('\n')
-	}
-
-	relPath := filepath.Join("published", entry.Name+".md")
-	absPath := filepath.Join(ws.MainWorktree, relPath)
-	if err := os.WriteFile(absPath, []byte(b.String()), 0o644); err != nil {
-		return "", grinderr.WrapSystem(err, "write draft %s", absPath)
-	}
-	return relPath, nil
 }
 
 // applyCleanup removes the project's worktree and/or branch per the user's

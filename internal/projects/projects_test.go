@@ -703,6 +703,9 @@ func TestPublishHappyPath(t *testing.T) {
 	addProjectEntry(t, ws, "my-blog", "")
 	addProjectWorktree(t, ws, "my-blog")
 	fake := newFakeGit()
+	// .projects.json is written by writeEntry, making it dirty so the
+	// commit fires.
+	fake.dirtyPaths = map[string]bool{".projects.json": true}
 	svc := NewService(fake)
 
 	if err := svc.Publish(ws, "my-blog", CleanupBoth); err != nil {
@@ -714,17 +717,6 @@ func TestPublishHappyPath(t *testing.T) {
 		t.Errorf("git calls = %v, want [MergeBranch:my-blog]", fake.calls)
 	}
 
-	// The draft must be written with the full frontmatter and the .idea
-	// body, ending in a newline.
-	draft, err := os.ReadFile(filepath.Join(ws.MainWorktree, "published", "my-blog.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "---\ntitle: My Blog\ntype: blog\ndate: " + time.Now().Format("2006-01-02") + "\nstatus: published\n---\n\n# My Blog\n\nSome details\n"
-	if string(draft) != want {
-		t.Errorf("draft = %q, want %q", string(draft), want)
-	}
-
 	// The entry must be marked published.
 	projects, err := config.ReadProjects(ws.ProjectsConfigPath())
 	if err != nil {
@@ -734,7 +726,7 @@ func TestPublishHappyPath(t *testing.T) {
 		t.Errorf("Status = %q, want published", got)
 	}
 
-	// One commit: the publish commit staging .projects.json and the draft.
+	// One commit: the publish commit staging .projects.json.
 	if len(fake.commits) != 1 {
 		t.Fatalf("commits = %d, want 1", len(fake.commits))
 	}
@@ -742,8 +734,8 @@ func TestPublishHappyPath(t *testing.T) {
 	if c.message != "Publish project: my-blog" {
 		t.Errorf("commit message = %q", c.message)
 	}
-	if len(c.paths) != 2 || c.paths[0] != ".projects.json" || c.paths[1] != "published/my-blog.md" {
-		t.Errorf("commit paths = %v", c.paths)
+	if len(c.paths) != 1 || c.paths[0] != ".projects.json" {
+		t.Errorf("commit paths = %v, want [.projects.json]", c.paths)
 	}
 
 	// CleanupBoth removes the worktree, then the branch.
@@ -752,66 +744,6 @@ func TestPublishHappyPath(t *testing.T) {
 	}
 	if len(fake.deleteBranch) != 1 || fake.deleteBranch[0] != "my-blog" {
 		t.Errorf("DeleteBranch calls = %v", fake.deleteBranch)
-	}
-}
-
-func TestPublishDraftOmitsOptionalFrontmatter(t *testing.T) {
-	ws := newTestWorkspace(t)
-	// No type, no author in config, and no .idea file: the draft falls back
-	// to entry.Idea for both title and body.
-	projects, err := config.ReadProjects(ws.ProjectsConfigPath())
-	if err != nil {
-		t.Fatal(err)
-	}
-	projects.Projects["my-blog"] = config.ProjectEntry{
-		Name: "my-blog",
-		Idea: "My Blog",
-	}
-	if err := config.WriteProjects(ws.ProjectsConfigPath(), projects); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(ws.ProjectWorktreePath("my-blog"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	fake := newFakeGit()
-	svc := NewService(fake)
-
-	if err := svc.Publish(ws, "my-blog", CleanupNone); err != nil {
-		t.Fatal(err)
-	}
-
-	draft, err := os.ReadFile(filepath.Join(ws.MainWorktree, "published", "my-blog.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := "---\ntitle: My Blog\ndate: " + time.Now().Format("2006-01-02") + "\nstatus: published\n---\n\nMy Blog\n"
-	if string(draft) != want {
-		t.Errorf("draft = %q, want %q", string(draft), want)
-	}
-}
-
-func TestPublishDraftIncludesAuthor(t *testing.T) {
-	ws := newTestWorkspace(t)
-	cfg := config.Default()
-	cfg.My = &config.MyConfig{Name: "Lee"}
-	if err := config.Write(ws.GrindConfigPath(), cfg); err != nil {
-		t.Fatal(err)
-	}
-	addProjectEntry(t, ws, "my-blog", "")
-	addProjectWorktree(t, ws, "my-blog")
-	fake := newFakeGit()
-	svc := NewService(fake)
-
-	if err := svc.Publish(ws, "my-blog", CleanupNone); err != nil {
-		t.Fatal(err)
-	}
-
-	draft, err := os.ReadFile(filepath.Join(ws.MainWorktree, "published", "my-blog.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(draft), "author: Lee\n") {
-		t.Errorf("draft missing author:\n%s", draft)
 	}
 }
 
@@ -922,6 +854,25 @@ func TestPublishMergeFailure(t *testing.T) {
 	// No commit: the merge failed before any state change.
 	if len(fake.commits) != 0 {
 		t.Errorf("commits = %d, want 0", len(fake.commits))
+	}
+}
+
+func TestPublishRePublishNoChange(t *testing.T) {
+	ws := newTestWorkspace(t)
+	addProjectEntry(t, ws, "my-blog", "")
+	addProjectWorktree(t, ws, "my-blog")
+	fake := newFakeGit()
+	// Re-publishing when the project is already published means the status
+	// write is a no-op and .projects.json is unchanged. The publish commit
+	// must be skipped instead of failing with "nothing to commit".
+	svc := NewService(fake)
+
+	if err := svc.Publish(ws, "my-blog", CleanupNone); err != nil {
+		t.Fatal(err)
+	}
+	// No commit because nothing changed.
+	if len(fake.commits) != 0 {
+		t.Errorf("commits = %d, want 0 (nothing changed, commit should be skipped)", len(fake.commits))
 	}
 }
 
@@ -1048,6 +999,7 @@ func TestPublishCleanupWorktreeOnly(t *testing.T) {
 	addProjectEntry(t, ws, "my-blog", "")
 	addProjectWorktree(t, ws, "my-blog")
 	fake := newFakeGit()
+	fake.dirtyPaths = map[string]bool{".projects.json": true}
 	svc := NewService(fake)
 
 	if err := svc.Publish(ws, "my-blog", CleanupWorktree); err != nil {
@@ -1066,6 +1018,7 @@ func TestPublishCleanupNone(t *testing.T) {
 	addProjectEntry(t, ws, "my-blog", "")
 	addProjectWorktree(t, ws, "my-blog")
 	fake := newFakeGit()
+	fake.dirtyPaths = map[string]bool{".projects.json": true}
 	svc := NewService(fake)
 
 	if err := svc.Publish(ws, "my-blog", CleanupNone); err != nil {
