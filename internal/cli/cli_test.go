@@ -31,6 +31,26 @@ type fakeGit struct {
 	// no entry (or a nil map) has no commits, like a project branch that
 	// was never pushed to.
 	lastCommitDates map[string]time.Time
+	// defaultBranch is what DefaultBranch returns. It defaults to "main"
+	// via the zero value handling in the method.
+	defaultBranch string
+	// setRemoteURLs records every URL passed to SetRemoteURL.
+	setRemoteURLs []string
+	// pushBranch records every branch passed to PushBranch.
+	pushBranch []string
+	// fetchAll counts FetchAll calls.
+	fetchAll int
+	// remoteBranches is what ListRemoteBranches returns.
+	remoteBranches []string
+	// isAncestor maps "ancestor|descendant" to the result. A missing key
+	// means "not an ancestor".
+	isAncestor map[string]bool
+	// ffWorktree records every FastForwardWorktree call.
+	ffWorktree []string
+	// ffRef records every FastForwardRef call.
+	ffRef []string
+	// addWorktree records every AddWorktree call.
+	addWorktree [][]string
 }
 
 type fakeCommit struct {
@@ -79,6 +99,48 @@ func (f *fakeGit) RemoteURL(repoPath string) (string, error) {
 func (f *fakeGit) PushAll(repoPath string) error {
 	f.pushAll++
 	return f.pushErr
+}
+
+// DefaultBranch returns the configured default branch, or "main" when none
+// was set — mirroring the real implementation's init behavior.
+func (f *fakeGit) DefaultBranch(repoPath string) (string, error) {
+	if f.defaultBranch != "" {
+		return f.defaultBranch, nil
+	}
+	return "main", nil
+}
+
+func (f *fakeGit) SetRemoteURL(repoPath, url string) error {
+	f.setRemoteURLs = append(f.setRemoteURLs, url)
+	return nil
+}
+
+func (f *fakeGit) PushBranch(repoPath, branch string) error {
+	f.pushBranch = append(f.pushBranch, branch)
+	return f.pushErr
+}
+
+func (f *fakeGit) FetchAll(repoPath string) error {
+	f.fetchAll++
+	return nil
+}
+
+func (f *fakeGit) IsAncestor(repoPath, ancestor, descendant string) (bool, error) {
+	return f.isAncestor[ancestor+"|"+descendant], nil
+}
+
+func (f *fakeGit) FastForwardWorktree(worktreePath, branch string) error {
+	f.ffWorktree = append(f.ffWorktree, branch)
+	return nil
+}
+
+func (f *fakeGit) FastForwardRef(repoPath, branch string) error {
+	f.ffRef = append(f.ffRef, branch)
+	return nil
+}
+
+func (f *fakeGit) ListRemoteBranches(repoPath string) ([]string, error) {
+	return f.remoteBranches, nil
 }
 
 // LastCommitDate returns the branch's recorded commit time, or the zero
@@ -352,8 +414,8 @@ func TestVersionFlag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "0.90.4\n" {
-		t.Errorf("output = %q, want %q", out, "0.90.4\n")
+	if out != "0.90.5\n" {
+		t.Errorf("output = %q, want %q", out, "0.90.5\n")
 	}
 }
 
@@ -1198,6 +1260,121 @@ func TestSaveCommandNeverPushes(t *testing.T) {
 	}
 }
 
+func TestSaveCommandNoArgsDirtyMain(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	fake.hasChanges = true
+
+	out, err := execute(t, fake, "save")
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if !strings.Contains(out, "Saved workspace changes.") {
+		t.Errorf("output = %q", out)
+	}
+	if len(fake.commitAll) != 1 {
+		t.Fatalf("CommitAll calls = %d, want 1", len(fake.commitAll))
+	}
+	if fake.commitAll[0].message != "Save workspace" {
+		t.Errorf("CommitAll message = %q, want %q", fake.commitAll[0].message, "Save workspace")
+	}
+}
+
+func TestSaveCommandNoArgsCleanMain(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	out, err := execute(t, fake, "save")
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if !strings.Contains(out, "Nothing to save.") {
+		t.Errorf("output = %q", out)
+	}
+	if len(fake.commitAll) != 0 {
+		t.Errorf("CommitAll calls = %d, want 0", len(fake.commitAll))
+	}
+}
+
+func TestSaveCommandNoArgsNotInWorkspace(t *testing.T) {
+	dir := t.TempDir()
+	oldDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(oldDir)
+
+	_, err = execute(t, &fakeGit{}, "save")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "Not in a grind workspace.") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestPullCommandHappyPath(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+	fake.remoteURL = "git@example.com:repo.git"
+	fake.remoteBranches = []string{"main", "my-blog"}
+	fake.isAncestor = map[string]bool{
+		"main|origin/main":       true,
+		"origin/main|main":       false,
+		"my-blog|origin/my-blog": true,
+		"origin/my-blog|my-blog": false,
+	}
+
+	out, err := execute(t, fake, "pull")
+	if err != nil {
+		t.Fatalf("pull: %v", err)
+	}
+	if fake.fetchAll != 1 {
+		t.Errorf("FetchAll calls = %d, want 1", fake.fetchAll)
+	}
+	if !strings.Contains(out, "Fast-forwarded 2 branch(es): main, my-blog") {
+		t.Errorf("output = %q", out)
+	}
+}
+
+func TestPullCommandDirtyMain(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	fake.remoteURL = "git@example.com:repo.git"
+	fake.hasChanges = true
+
+	_, err := execute(t, fake, "pull")
+	if err == nil {
+		t.Fatal("pull with dirty .main: expected error")
+	}
+	if !strings.Contains(err.Error(), "You have uncommitted changes in .main. Run 'grind save' before pulling.") {
+		t.Errorf("error = %q", err.Error())
+	}
+	if fake.fetchAll != 0 {
+		t.Errorf("FetchAll calls = %d, want 0 (fail before fetch)", fake.fetchAll)
+	}
+}
+
+func TestPullCommandNoRemote(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	_, err := execute(t, fake, "pull")
+	if err == nil {
+		t.Fatal("pull without a remote: expected error")
+	}
+	if !strings.Contains(err.Error(), "No remote configured") {
+		t.Errorf("error = %q", err.Error())
+	}
+	if fake.fetchAll != 0 {
+		t.Errorf("FetchAll calls = %d, want 0", fake.fetchAll)
+	}
+}
+
 func TestPushCommandNoRemote(t *testing.T) {
 	fake, cleanup := runInWorkspace(t)
 	defer cleanup()
@@ -1212,6 +1389,9 @@ func TestPushCommandNoRemote(t *testing.T) {
 	if fake.pushAll != 0 {
 		t.Errorf("PushAll calls = %d, want 0", fake.pushAll)
 	}
+	if len(fake.pushBranch) != 0 {
+		t.Errorf("PushBranch calls = %v, want 0", fake.pushBranch)
+	}
 }
 
 func TestPushCommandHappyPath(t *testing.T) {
@@ -1224,11 +1404,107 @@ func TestPushCommandHappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("push: %v", err)
 	}
+	if len(fake.pushBranch) != 1 || fake.pushBranch[0] != "main" {
+		t.Errorf("PushBranch calls = %v, want [main]", fake.pushBranch)
+	}
+	if fake.pushAll != 0 {
+		t.Errorf("PushAll calls = %d, want 0", fake.pushAll)
+	}
+	if !strings.Contains(out, "Pushed main to origin.") {
+		t.Errorf("output = %q", out)
+	}
+}
+
+func TestPushCommandProject(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+	fake.remoteURL = "git@example.com:repo.git"
+
+	out, err := execute(t, fake, "push", "my-blog")
+	if err != nil {
+		t.Fatalf("push my-blog: %v", err)
+	}
+	if len(fake.pushBranch) != 1 || fake.pushBranch[0] != "my-blog" {
+		t.Errorf("PushBranch calls = %v, want [my-blog]", fake.pushBranch)
+	}
+	if fake.pushAll != 0 {
+		t.Errorf("PushAll calls = %d, want 0", fake.pushAll)
+	}
+	if !strings.Contains(out, "Pushed my-blog to origin.") {
+		t.Errorf("output = %q", out)
+	}
+}
+
+func TestPushCommandAll(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+	fake.remoteURL = "git@example.com:repo.git"
+
+	out, err := execute(t, fake, "push", "all")
+	if err != nil {
+		t.Fatalf("push all: %v", err)
+	}
 	if fake.pushAll != 1 {
 		t.Errorf("PushAll calls = %d, want 1", fake.pushAll)
 	}
+	if len(fake.pushBranch) != 0 {
+		t.Errorf("PushBranch calls = %v, want 0", fake.pushBranch)
+	}
 	if !strings.Contains(out, "Pushed all branches to origin.") {
 		t.Errorf("output = %q", out)
+	}
+}
+
+func TestPushCommandDirtyMain(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	fake.remoteURL = "git@example.com:repo.git"
+	fake.hasChanges = true
+
+	_, err := execute(t, fake, "push")
+	if err == nil {
+		t.Fatal("push with dirty .main: expected error")
+	}
+	if !strings.Contains(err.Error(), "You have uncommitted changes in .main. Run 'grind save' to commit them.") {
+		t.Errorf("error = %q", err.Error())
+	}
+	if len(fake.pushBranch) != 0 {
+		t.Errorf("PushBranch calls = %v, want 0", fake.pushBranch)
+	}
+}
+
+func TestPushCommandDirtyProject(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+	fake.remoteURL = "git@example.com:repo.git"
+	fake.hasChanges = true
+
+	_, err := execute(t, fake, "push", "my-blog")
+	if err == nil {
+		t.Fatal("push my-blog with dirty worktree: expected error")
+	}
+	if !strings.Contains(err.Error(), "You have uncommitted changes in my-blog/. Run 'grind save my-blog' to commit them.") {
+		t.Errorf("error = %q", err.Error())
+	}
+	if len(fake.pushBranch) != 0 {
+		t.Errorf("PushBranch calls = %v, want 0", fake.pushBranch)
+	}
+}
+
+func TestPushCommandUnknownProject(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	fake.remoteURL = "git@example.com:repo.git"
+
+	_, err := execute(t, fake, "push", "nope")
+	if err == nil {
+		t.Fatal("push nope: expected error")
+	}
+	if err.Error() != "Project 'nope' does not exist." {
+		t.Errorf("error = %q", err.Error())
 	}
 }
 

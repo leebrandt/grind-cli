@@ -45,6 +45,24 @@ func (f *fakeGit) LastCommitDate(repoPath, branch string) (time.Time, error) {
 	return f.lastCommitDates[branch], nil
 }
 
+func (f *fakeGit) DefaultBranch(repoPath string) (string, error) { return "main", nil }
+
+func (f *fakeGit) SetRemoteURL(repoPath, url string) error { return nil }
+
+func (f *fakeGit) PushBranch(repoPath, branch string) error { return nil }
+
+func (f *fakeGit) FetchAll(repoPath string) error { return nil }
+
+func (f *fakeGit) IsAncestor(repoPath, ancestor, descendant string) (bool, error) {
+	return false, nil
+}
+
+func (f *fakeGit) FastForwardWorktree(worktreePath, branch string) error { return nil }
+
+func (f *fakeGit) FastForwardRef(repoPath, branch string) error { return nil }
+
+func (f *fakeGit) ListRemoteBranches(repoPath string) ([]string, error) { return nil, nil }
+
 // Ensure the stub satisfies the interface the service depends on.
 var _ git.Git = (*fakeGit)(nil)
 

@@ -76,7 +76,9 @@ turns out wrong, raise it in conversation first.
 2. **The main worktree is clean after every command.** Any command that
    mutates state commits immediately. Stage **only the specific files
    changed** — never `git add -A`. (The one exception: `edit` leaves files
-   dirty by design so the user can keep editing.)
+   dirty by design so the user can keep editing, and `grind save` with no
+   arguments is the explicit commit-everything verb that sweeps those edits
+   up.)
 3. The git layer is behind an **interface** so tests can fake it.
 4. `Commit` refuses to commit when there are unmerged paths
    (`git ls-files -u` non-empty) — protects the config-on-main design.
@@ -92,6 +94,10 @@ turns out wrong, raise it in conversation first.
   required.
 - `grind save <project> -t 8h` backfills: active session → end at
   `start + 8h`; no session → create `[now-8h, now]`. Both cases work.
+- `grind save` with no arguments commits every unsaved change in `.main`
+  (idea edits, journal entries, hand-edited configs). This is the missing
+  commit verb: `edit idea` leaves files dirty by design, and nothing else
+  commits them.
 
 ### Push/pull (cross-machine sync)
 
@@ -100,10 +106,24 @@ turns out wrong, raise it in conversation first.
   fast, offline-friendly, and the work is always committed. v1 only
   committed the main worktree, so the actual work never reached the remote;
   the rewrite fixes that by committing both worktrees.
-- `grind push` is the ONE verb that touches the remote: it pushes all
-  branches. A failed push is a real error (exit 1) — the user asked for it.
-- `grind pull` fetches, fast-forwards, and creates missing project
-  worktrees.
+- `grind push` is scoped. `grind push` pushes only the default branch
+  (`.main`'s branch); `grind push <project>` pushes only that project's
+  branch; `grind push all` pushes every branch. The default is deliberately
+  conservative: state syncs by default, work product syncs on request.
+- Push refuses to sync uncommitted work: a dirty worktree in scope fails
+  with a user error naming exactly what to run (`grind save` or
+  `grind save <project>`). A failed push is a real error (exit 1) — the
+  user asked for it.
+- `grind pull` fetches, fast-forwards what it can, and creates missing
+  project worktrees. The main worktree is updated with
+  `git merge --ff-only origin/<default>`; a diverged main is a loud failure,
+  not a warning. Project worktrees that cannot fast-forward (dirty or
+  diverged) are reported and left alone.
+- The remote URL lives in `.grind.json` (`remote.url`), with the git remote
+  as fallback. Push/pull resolve the URL (config first, then
+  `git remote get-url origin`) and sync the bare repo's `origin` from it —
+  the URL travels with the workspace instead of being a per-machine
+  artifact. No URL anywhere → user error.
 
 ### Error handling
 
@@ -122,8 +142,8 @@ verb set, each verb means exactly one thing:
 | `list` | enumerate | `list ideas`, `list projects`, `list tasks` |
 | `show` | detail one | `show my-blog` |
 | `edit` | open in editor | `edit idea 3`, `edit my-blog` |
-| `work` / `save` | start / stop session | `work my-blog`, `save my-blog` |
-| `push` / `pull` | sync with remote | `grind push`, `grind pull` |
+| `work` / `save` | start / stop session, or commit workspace | `work my-blog`, `save my-blog`, `save` |
+| `push` / `pull` | sync with remote | `grind push`, `grind push my-blog`, `grind push all`, `grind pull` |
 | `reject` / `prune` | idea lifecycle | `reject idea 3`, `prune ideas` |
 | `publish` / `cancel` | project lifecycle | `publish my-blog`, `cancel my-blog` |
 | `read` | print to stdout | `read journal` |
@@ -169,7 +189,7 @@ and what's next.
 | 4 | Tasks | ✅ done |
 | 5 | Journal | ✅ done |
 | 6 | Status (`wwd`) | ✅ done |
-| 7 | Push/pull | ⬜ |
+| 7 | Push/pull | ✅ done |
 | 8 | Config | ⬜ |
 | 9 | Publish/cancel | ⬜ |
 | 10 | Invoice | ⬜ |

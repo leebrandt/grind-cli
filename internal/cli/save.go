@@ -3,24 +3,34 @@ package cli
 import (
 	"fmt"
 
+	"github.com/leebrandt/grind/internal/git"
 	"github.com/leebrandt/grind/internal/projects"
 	"github.com/leebrandt/grind/internal/workspace"
 	"github.com/spf13/cobra"
 )
 
-// newSaveCmd builds `grind save <project> [-t|--time <duration>]`, which
-// ends the project's active session (or backfills one) and commits both
-// worktrees. Saving is local-only — pushing is `grind push`'s job.
-func newSaveCmd(svc *projects.Service) *cobra.Command {
+// newSaveCmd builds `grind save [project] [-t|--time <duration>]`.
+//
+// With no arguments it commits the main worktree — the missing commit verb
+// for .main, where `edit idea` and `edit journal` leave files dirty by
+// design. With a project name it keeps the slice-3 meaning: end the
+// project's active session (or backfill one) and commit both worktrees.
+// Saving is local-only — pushing is `grind push`'s job.
+func newSaveCmd(svc *projects.Service, g git.Git) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "save <project>",
-		Short: "End a work session and save",
-		Args:  cobra.ExactArgs(1),
+		Use:   "save [project]",
+		Short: "Commit workspace changes, or end a work session and save",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ws, err := workspace.Require(".")
 			if err != nil {
 				return err
 			}
+
+			if len(args) == 0 {
+				return saveMain(cmd, g, ws)
+			}
+
 			name := args[0]
 
 			// Look up the project before parsing -t so a missing project is
@@ -76,4 +86,25 @@ func newSaveCmd(svc *projects.Service) *cobra.Command {
 	}
 	cmd.Flags().StringP("time", "t", "", "backfill duration (e.g. 5, 5h, 1h30m, 90m)")
 	return cmd
+}
+
+// saveMain commits every unsaved change in .main. This is the explicit
+// save-everything verb, so CommitAll's `git add -A` is the documented
+// exception to the "stage only specific files" rule — the user asked to
+// commit everything.
+func saveMain(cmd *cobra.Command, g git.Git, ws *workspace.Workspace) error {
+	hasChanges, err := g.HasChanges(ws.MainWorktree)
+	if err != nil {
+		return err
+	}
+	if !hasChanges {
+		// A no-op is not an error: the workspace is already clean.
+		fmt.Fprintln(cmd.OutOrStdout(), "Nothing to save.")
+		return nil
+	}
+	if err := g.CommitAll(ws.MainWorktree, "Save workspace"); err != nil {
+		return err
+	}
+	fmt.Fprintln(cmd.OutOrStdout(), "Saved workspace changes.")
+	return nil
 }
