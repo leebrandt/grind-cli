@@ -1124,53 +1124,8 @@ func TestMergeBranch(t *testing.T) {
 	bareRepo, main := newBareRepoWithMain(t)
 	g := New()
 
-	// Create a feature branch with a worktree and commit work on it.
-	if err := run(bareRepo, "branch", "feature"); err != nil {
-		t.Fatal(err)
-	}
-	feature := filepath.Join(filepath.Dir(main), "feature")
-	if err := g.AddWorktree(bareRepo, feature, "feature"); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(feature, "work.md"), []byte("work\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := g.Commit(feature, "Feature work", "work.md"); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := g.MergeBranch(main, "feature"); err != nil {
-		t.Fatalf("MergeBranch() error = %v", err)
-	}
-
-	// The merged file must be present in main's worktree.
-	if _, err := os.Stat(filepath.Join(main, "work.md")); err != nil {
-		t.Errorf("work.md not in main after merge: %v", err)
-	}
-
-	// --no-ff guarantees a merge commit: main's log has two commits after
-	// the initial one (the feature commit and the merge commit).
-	log, err := output(main, "log", "--oneline")
-	if err != nil {
-		t.Fatal(err)
-	}
-	lines := strings.Split(strings.TrimSpace(log), "\n")
-	if len(lines) != 3 {
-		t.Errorf("main log has %d commits, want 3 (initial, feature, merge):\n%s", len(lines), log)
-	}
-	if !strings.Contains(lines[0], "Merge branch 'feature'") {
-		t.Errorf("latest commit = %q, want a merge commit", lines[0])
-	}
-}
-
-func TestMergeBranchUnrelatedHistories(t *testing.T) {
-	bareRepo, main := newBareRepoWithMain(t)
-	g := New()
-
-	// This is the real production shape: CreateBranch starts a project
-	// branch from an EMPTY TREE, so it shares no history with main. A plain
-	// `git merge` would refuse with "refusing to merge unrelated histories";
-	// MergeBranch must pass --allow-unrelated-histories.
+	// Create a project branch from an empty tree (the real production shape)
+	// and commit work on it.
 	if err := g.CreateBranch(bareRepo, "my-blog"); err != nil {
 		t.Fatal(err)
 	}
@@ -1189,22 +1144,161 @@ func TestMergeBranchUnrelatedHistories(t *testing.T) {
 		t.Fatalf("MergeBranch() error = %v", err)
 	}
 
-	// The work product must be in main's tree after the merge.
-	body, err := os.ReadFile(filepath.Join(main, ".idea"))
-	if err != nil {
-		t.Errorf(".idea not in main after merge: %v", err)
+	// The merged file must be under projects/my-blog/, NOT at root.
+	if _, err := os.Stat(filepath.Join(main, "projects", "my-blog", ".idea")); err != nil {
+		t.Errorf("projects/my-blog/.idea not in main after merge: %v", err)
 	}
-	if string(body) != "# My Blog\n" {
-		t.Errorf(".idea = %q, want %q", body, "# My Blog\n")
+	// The root must NOT have a stray .idea file.
+	if _, err := os.Stat(filepath.Join(main, ".idea")); err == nil {
+		t.Error(".idea exists at root after merge, want it only under projects/my-blog/")
 	}
 
-	// The merge must produce a merge commit (--no-ff).
+	// The merge commit must exist.
 	log, err := output(main, "log", "--oneline", "-1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(log, "Merge branch 'my-blog'") {
-		t.Errorf("latest commit = %q, want a merge commit", log)
+	if !strings.Contains(log, "Publish project: my-blog") {
+		t.Errorf("latest commit = %q, want 'Publish project: my-blog'", strings.TrimSpace(log))
+	}
+
+	// The worktree must be clean: the merge commit captured the merged tree.
+	status, err := output(main, "status", "--porcelain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(status) != "" {
+		t.Errorf("worktree not clean after merge, status:\n%s", status)
+	}
+}
+
+func TestMergeBranchNoOpWhenAlreadyMerged(t *testing.T) {
+	bareRepo, main := newBareRepoWithMain(t)
+	g := New()
+
+	// Create a project branch with work.
+	if err := g.CreateBranch(bareRepo, "my-blog"); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(filepath.Dir(main), "my-blog")
+	if err := g.AddWorktree(bareRepo, project, "my-blog"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, ".idea"), []byte("# My Blog\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Commit(project, "Add idea: My Blog", ".idea"); err != nil {
+		t.Fatal(err)
+	}
+
+	// First merge succeeds and creates a commit.
+	if err := g.MergeBranch(main, "my-blog"); err != nil {
+		t.Fatal(err)
+	}
+	before, err := output(main, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Second merge is a no-op: same HEAD, no new commit.
+	if err := g.MergeBranch(main, "my-blog"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := output(main, "rev-parse", "HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before != after {
+		t.Error("second MergeBranch created a new commit, want no-op")
+	}
+}
+
+func TestMergeBranchMultiProject(t *testing.T) {
+	bareRepo, main := newBareRepoWithMain(t)
+	g := New()
+
+	// Create two project branches with different work.
+	for _, name := range []string{"blog", "leenix"} {
+		if err := g.CreateBranch(bareRepo, name); err != nil {
+			t.Fatal(err)
+		}
+		project := filepath.Join(filepath.Dir(main), name)
+		if err := g.AddWorktree(bareRepo, project, name); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(project, ".idea"), []byte("# "+name+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := g.Commit(project, "Add idea: "+name, ".idea"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Publish both projects — the second must not overwrite the first.
+	if err := g.MergeBranch(main, "blog"); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.MergeBranch(main, "leenix"); err != nil {
+		t.Fatal(err)
+	}
+
+	body1, err := os.ReadFile(filepath.Join(main, "projects", "blog", ".idea"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body1) != "# blog\n" {
+		t.Errorf("blog .idea = %q, want %q", body1, "# blog\n")
+	}
+
+	body2, err := os.ReadFile(filepath.Join(main, "projects", "leenix", ".idea"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body2) != "# leenix\n" {
+		t.Errorf("leenix .idea = %q, want %q", body2, "# leenix\n")
+	}
+}
+
+func TestMergeBranchOverwrite(t *testing.T) {
+	bareRepo, main := newBareRepoWithMain(t)
+	g := New()
+
+	// Publish a project, then commit more work and publish again. The
+	// second publish must reflect the updated content.
+	if err := g.CreateBranch(bareRepo, "my-blog"); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(filepath.Dir(main), "my-blog")
+	if err := g.AddWorktree(bareRepo, project, "my-blog"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, ".idea"), []byte("# v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Commit(project, "v1", ".idea"); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.MergeBranch(main, "my-blog"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Update the project branch with new content.
+	if err := os.WriteFile(filepath.Join(project, ".idea"), []byte("# v2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Commit(project, "v2", ".idea"); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.MergeBranch(main, "my-blog"); err != nil {
+		t.Fatal(err)
+	}
+
+	body, err := os.ReadFile(filepath.Join(main, "projects", "my-blog", ".idea"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "# v2\n" {
+		t.Errorf("overwrite .idea = %q, want %q", body, "# v2\n")
 	}
 }
 

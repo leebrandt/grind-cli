@@ -282,10 +282,10 @@ func (s *Service) Publish(ws *workspace.Workspace, name string, cleanup Cleanup)
 
 	// Merge BEFORE any state change: a failed merge leaves nothing marked
 	// published (v1 committed the config first and could strand a project
-	// marked published with an unmerged branch).
+	// marked published with an unmerged branch). Conflicts are structurally
+	// impossible with the plumbing-based merge, so a failure is a system error.
 	if err := s.Git.MergeBranch(ws.MainWorktree, name); err != nil {
-		return grinderr.NewUser(fmt.Sprintf(
-			"Merge failed for project '%s'. Resolve conflicts in .main manually, then run 'grind save'.", name))
+		return grinderr.WrapSystem(err, "merge project '%s' into main", name)
 	}
 
 	draftPath, err := s.writeDraft(ws, entry, worktreePath)

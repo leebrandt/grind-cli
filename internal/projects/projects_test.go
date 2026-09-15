@@ -911,11 +911,11 @@ func TestPublishMergeFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	var user *grinderr.User
-	if !errors.As(err, &user) {
-		t.Fatalf("expected *grinderr.User, got %T", err)
+	var sys *grinderr.System
+	if !errors.As(err, &sys) {
+		t.Fatalf("expected *grinderr.System, got %T", err)
 	}
-	want := "Merge failed for project 'my-blog'. Resolve conflicts in .main manually, then run 'grind save'."
+	want := "merge project 'my-blog' into main: merge conflict"
 	if err.Error() != want {
 		t.Errorf("message = %q, want %q", err.Error(), want)
 	}

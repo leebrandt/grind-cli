@@ -93,13 +93,13 @@ type Git interface {
 	// ListRemoteBranches returns the remote branch names
 	// (refs/remotes/origin/*, excluding HEAD).
 	ListRemoteBranches(repoPath string) ([]string, error)
-	// MergeBranch runs `git merge --no-ff --allow-unrelated-histories
-	// <branch>` in the worktree, merging the branch into the worktree's
-	// current branch. publish uses it to bring a project branch into the
-	// default branch. --no-ff guarantees a visible merge commit in history
-	// even when the merge could fast-forward. --allow-unrelated-histories
-	// is required because project branches start from an empty tree
-	// (CreateBranch), so they share no history with main.
+	// MergeBranch merges branch into the worktree's current branch under
+	// the prefix projects/<branch>/, so each project's work product lives in
+	// its own subdirectory on the default branch. The merge is built from
+	// plumbing commands (read-tree / commit-tree) rather than porcelain, so
+	// conflicts are structurally impossible: the project's tree replaces
+	// only projects/<branch>/ while everything else is untouched. When the
+	// project is already merged at the same tree the operation is a no-op.
 	MergeBranch(worktreePath, branch string) error
 	// RemoveWorktree runs `git worktree remove --force <path>` in the bare
 	// repo. publish/cancel use it after the user chose to clean up; --force is

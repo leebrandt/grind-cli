@@ -113,7 +113,7 @@ func Init(g git.Git, dir string) error {
 
 	// Git does not track empty directories, so each gets a .gitkeep to make
 	// sure the layout exists after init.
-	for _, sub := range []string{"ideas", "journal", "published"} {
+	for _, sub := range []string{"ideas", "journal", "published", "projects"} {
 		subDir := filepath.Join(mainWorktree, sub)
 		if err := os.MkdirAll(subDir, 0o755); err != nil {
 			return grinderr.WrapSystem(err, "create %s directory", sub)
@@ -130,6 +130,7 @@ func Init(g git.Git, dir string) error {
 		"ideas/.gitkeep",
 		"journal/.gitkeep",
 		"published/.gitkeep",
+		"projects/.gitkeep",
 	}
 	return g.Commit(mainWorktree, "Initialize grind workspace", paths...)
 }
@@ -147,6 +148,13 @@ func (w *Workspace) JournalDir() string {
 // PublishedDir returns the directory holding final-draft exports.
 func (w *Workspace) PublishedDir() string {
 	return filepath.Join(w.MainWorktree, "published")
+}
+
+// ProjectsDir returns the directory holding merged project work products.
+// Each published project lives under projects/<name>/ so multiple projects
+// never collide at main's root.
+func (w *Workspace) ProjectsDir() string {
+	return filepath.Join(w.MainWorktree, "projects")
 }
 
 // GrindConfigPath returns the path to .grind.json.

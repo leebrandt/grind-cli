@@ -287,20 +287,68 @@ func (g *execGit) ListRemoteBranches(repoPath string) ([]string, error) {
 	return branches, nil
 }
 
-// MergeBranch runs `git merge --no-ff --allow-unrelated-histories <branch>`
-// in the worktree. publish uses it to bring a project branch into the
-// default branch. --no-ff guarantees a visible merge commit in history even
-// when the merge could fast-forward, so the publication is always a
-// distinct, reviewable step.
+// MergeBranch merges branch into the worktree's current branch under the
+// prefix projects/<branch>/, so each project's work product lives in its own
+// subdirectory on the default branch. The merge is built from plumbing
+// commands (read-tree / commit-tree) rather than porcelain, so conflicts are
+// structurally impossible: the project's tree replaces only
+// projects/<branch>/ while everything else is untouched.
 //
-// --allow-unrelated-histories is required because project branches start
-// from an empty tree (CreateBranch), not from main's history: the
-// constitution keeps project branches free of config and state, so they
-// cannot branch off main. The merge brings the work product (the .idea
-// file, etc.) into main's tree; there is no conflict because the project
-// branch and main touch disjoint paths.
+// When the project is already merged at the same tree the operation is a
+// no-op — no empty merge commit clutters history.
 func (g *execGit) MergeBranch(worktreePath, branch string) error {
-	return run(worktreePath, "merge", "--no-ff", "--allow-unrelated-histories", branch)
+	// Check whether the project is already merged at the same tree.
+	branchTree, err := output(worktreePath, "rev-parse", branch+"^{tree}")
+	if err != nil {
+		return grinderr.WrapSystem(err, "resolve branch tree for %s", branch)
+	}
+	existingTree, err := output(worktreePath, "rev-parse", "HEAD:projects/"+branch)
+	if err == nil && existingTree == branchTree {
+		return nil // already merged at the same tree, no-op
+	}
+
+	// Start from the current HEAD tree.
+	baseTree, err := output(worktreePath, "rev-parse", "HEAD^{tree}")
+	if err != nil {
+		return grinderr.WrapSystem(err, "resolve HEAD tree")
+	}
+
+	// Reset the index to the base tree, then remove any old
+	// projects/<branch>/ entries so the prefix read does not collide.
+	if _, stderr, err := outputFull(worktreePath, "read-tree", baseTree); err != nil {
+		return grinderr.WrapSystem(err, "read-tree base: %s", stderr)
+	}
+	if _, stderr, err := outputFull(worktreePath, "rm", "-r", "--cached", "--ignore-unmatch", "projects/"+branch); err != nil {
+		return grinderr.WrapSystem(err, "rm cached subtree: %s", stderr)
+	}
+
+	// Read the branch's tree into the index under the projects/<branch>/
+	// prefix. No -u flag: checkout-index updates the working tree below.
+	if _, stderr, err := outputFull(worktreePath, "read-tree", "--prefix=projects/"+branch+"/", branch); err != nil {
+		return grinderr.WrapSystem(err, "read-tree prefix: %s", stderr)
+	}
+
+	// Update the working tree to match the index.
+	if err := run(worktreePath, "checkout-index", "-f", "-a"); err != nil {
+		return grinderr.WrapSystem(err, "checkout-index")
+	}
+
+	// Write the index to a tree object — this captures the merged state
+	// (base tree + branch subtree at projects/<branch>/).
+	newTree, err := output(worktreePath, "write-tree")
+	if err != nil {
+		return grinderr.WrapSystem(err, "write-tree")
+	}
+
+	// Commit the result.
+	commitHash, err := output(worktreePath,
+		"-c", "user.name=grind",
+		"-c", "user.email=grind@localhost",
+		"commit-tree", newTree, "-m", "Publish project: "+branch)
+	if err != nil {
+		return grinderr.WrapSystem(err, "commit-tree")
+	}
+	return run(worktreePath, "update-ref", "HEAD", commitHash)
 }
 
 // RemoveWorktree runs `git worktree remove --force <path>` in the bare
