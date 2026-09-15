@@ -148,6 +148,7 @@ verb set, each verb means exactly one thing:
 | `publish` / `cancel` | project lifecycle | `publish my-blog`, `cancel my-blog` |
 | `read` | print to stdout | `read journal` |
 | `done` | complete a task | `done task 3` |
+| `config` | get/set/list config | `grind config`, `grind config billing.defaultRate 200`, `grind config my-blog billing.rate 250` |
 
 Rules:
 - **Singular when acting on one, plural when acting on many.** `new idea`,
@@ -190,7 +191,7 @@ and what's next.
 | 5 | Journal | ✅ done |
 | 6 | Status (`wwd`) | ✅ done |
 | 7 | Push/pull | ✅ done |
-| 8 | Config | ⬜ |
+| 8 | Config | ✅ done |
 | 9 | Publish/cancel | ⬜ |
 | 10 | Invoice | ⬜ |
 | 11 | Migrate (v1 workspace conversion) | ⬜ |

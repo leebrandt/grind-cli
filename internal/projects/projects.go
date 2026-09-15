@@ -23,10 +23,6 @@ import (
 	"github.com/leebrandt/grind/internal/workspace"
 )
 
-// defaultTypes is the fallback list of project types when .grind.json does
-// not configure any.
-var defaultTypes = []string{"blog", "webapp", "video", "song", "book", "feature", "issue"}
-
 // Service performs project operations against a workspace using the given
 // git implementation. The git layer is injected so tests can substitute a
 // fake and verify exactly which operations run and in what order.
@@ -87,7 +83,7 @@ func (s *Service) Create(ws *workspace.Workspace, name, projectType, ideaFilenam
 		return nil, err
 	}
 
-	if err := validateType(cfg, projectType); err != nil {
+	if err := config.ValidateType(cfg, projectType); err != nil {
 		return nil, err
 	}
 
@@ -274,31 +270,6 @@ func invalidBranchName(name string) string {
 		}
 	}
 	return ""
-}
-
-// validTypes returns the effective project types: the configured list from
-// .grind.json, or the default list when none is configured.
-func validTypes(cfg config.GrindConfig) []string {
-	if len(cfg.ProjectTypes) > 0 {
-		return cfg.ProjectTypes
-	}
-	return defaultTypes
-}
-
-// validateType checks that projectType is in the effective types list. An
-// empty type is always allowed — the type is optional at creation.
-func validateType(cfg config.GrindConfig, projectType string) error {
-	if projectType == "" {
-		return nil
-	}
-	types := validTypes(cfg)
-	for _, t := range types {
-		if t == projectType {
-			return nil
-		}
-	}
-	return grinderr.NewUser(fmt.Sprintf("Invalid type: %s. Valid types: %s",
-		projectType, strings.Join(types, ", ")))
 }
 
 // readConfig loads .grind.json, falling back to defaults when the file is
