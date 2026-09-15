@@ -287,12 +287,20 @@ func (g *execGit) ListRemoteBranches(repoPath string) ([]string, error) {
 	return branches, nil
 }
 
-// MergeBranch runs `git merge --no-ff <branch>` in the worktree. publish
-// uses it to bring a project branch into the default branch. --no-ff
-// guarantees a visible merge commit in history even when the merge could
-// fast-forward, so the publication is always a distinct, reviewable step.
+// MergeBranch runs `git merge --no-ff --allow-unrelated-histories <branch>`
+// in the worktree. publish uses it to bring a project branch into the
+// default branch. --no-ff guarantees a visible merge commit in history even
+// when the merge could fast-forward, so the publication is always a
+// distinct, reviewable step.
+//
+// --allow-unrelated-histories is required because project branches start
+// from an empty tree (CreateBranch), not from main's history: the
+// constitution keeps project branches free of config and state, so they
+// cannot branch off main. The merge brings the work product (the .idea
+// file, etc.) into main's tree; there is no conflict because the project
+// branch and main touch disjoint paths.
 func (g *execGit) MergeBranch(worktreePath, branch string) error {
-	return run(worktreePath, "merge", "--no-ff", branch)
+	return run(worktreePath, "merge", "--no-ff", "--allow-unrelated-histories", branch)
 }
 
 // RemoveWorktree runs `git worktree remove --force <path>` in the bare

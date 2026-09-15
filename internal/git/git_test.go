@@ -1163,6 +1163,51 @@ func TestMergeBranch(t *testing.T) {
 	}
 }
 
+func TestMergeBranchUnrelatedHistories(t *testing.T) {
+	bareRepo, main := newBareRepoWithMain(t)
+	g := New()
+
+	// This is the real production shape: CreateBranch starts a project
+	// branch from an EMPTY TREE, so it shares no history with main. A plain
+	// `git merge` would refuse with "refusing to merge unrelated histories";
+	// MergeBranch must pass --allow-unrelated-histories.
+	if err := g.CreateBranch(bareRepo, "my-blog"); err != nil {
+		t.Fatal(err)
+	}
+	project := filepath.Join(filepath.Dir(main), "my-blog")
+	if err := g.AddWorktree(bareRepo, project, "my-blog"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(project, ".idea"), []byte("# My Blog\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Commit(project, "Add idea: My Blog", ".idea"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := g.MergeBranch(main, "my-blog"); err != nil {
+		t.Fatalf("MergeBranch() error = %v", err)
+	}
+
+	// The work product must be in main's tree after the merge.
+	body, err := os.ReadFile(filepath.Join(main, ".idea"))
+	if err != nil {
+		t.Errorf(".idea not in main after merge: %v", err)
+	}
+	if string(body) != "# My Blog\n" {
+		t.Errorf(".idea = %q, want %q", body, "# My Blog\n")
+	}
+
+	// The merge must produce a merge commit (--no-ff).
+	log, err := output(main, "log", "--oneline", "-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(log, "Merge branch 'my-blog'") {
+		t.Errorf("latest commit = %q, want a merge commit", log)
+	}
+}
+
 func TestRemoveWorktree(t *testing.T) {
 	bareRepo, main := newBareRepoWithMain(t)
 	g := New()
