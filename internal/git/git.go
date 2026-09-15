@@ -63,6 +63,36 @@ type Git interface {
 	// in the bare repo, or the zero time when the branch has no commits.
 	// The wwd dashboard uses it for the "Last Commit" column.
 	LastCommitDate(repoPath, branch string) (time.Time, error)
+	// DefaultBranch returns the name of the repo's current branch
+	// (`git symbolic-ref --short HEAD`). The rewrite hardcodes "main" at
+	// init, but resolving it here avoids v1's bug of hardcoding "main" in
+	// pull logic.
+	DefaultBranch(repoPath string) (string, error)
+	// SetRemoteURL sets the origin remote URL, adding origin when it does
+	// not exist and updating it otherwise. push and pull sync origin from
+	// .grind.json's remote.url so the URL travels with the workspace.
+	SetRemoteURL(repoPath, url string) error
+	// PushBranch runs `git push -u origin <branch>` in the bare repo,
+	// setting the upstream tracking ref on first push. Like PushAll, a
+	// failed push returns a *PushError carrying git's stderr.
+	PushBranch(repoPath, branch string) error
+	// FetchAll runs `git fetch origin` in the bare repo, updating the
+	// refs/remotes/origin/* tracking branches.
+	FetchAll(repoPath string) error
+	// IsAncestor reports whether ancestor is an ancestor of descendant
+	// (or equal). pull uses it to decide whether a branch can fast-forward.
+	IsAncestor(repoPath, ancestor, descendant string) (bool, error)
+	// FastForwardWorktree runs `git merge --ff-only origin/<branch>` in the
+	// worktree, updating both the branch ref and the working files. It fails
+	// when the worktree has uncommitted changes or the branch diverged.
+	FastForwardWorktree(worktreePath, branch string) error
+	// FastForwardRef points refs/heads/<branch> at refs/remotes/origin/<branch>
+	// in the bare repo, for branches not checked out in any worktree. Callers
+	// verify IsAncestor first.
+	FastForwardRef(repoPath, branch string) error
+	// ListRemoteBranches returns the remote branch names
+	// (refs/remotes/origin/*, excluding HEAD).
+	ListRemoteBranches(repoPath string) ([]string, error)
 }
 
 // PushError is returned by PushAll when git push fails. It carries git's

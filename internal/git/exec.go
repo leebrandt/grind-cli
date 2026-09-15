@@ -186,6 +186,107 @@ func (g *execGit) PushAll(repoPath string) error {
 	return &PushError{Stderr: stderr, Err: err}
 }
 
+// DefaultBranch returns the name of the repo's current branch.
+// `git symbolic-ref --short HEAD` prints just the branch name, e.g. "main".
+func (g *execGit) DefaultBranch(repoPath string) (string, error) {
+	return output(repoPath, "symbolic-ref", "--short", "HEAD")
+}
+
+// SetRemoteURL sets the origin remote URL, adding origin when it does not
+// exist and updating it when it points elsewhere. push and pull call this
+// after resolving the URL so the bare repo's origin always matches the
+// workspace's configured remote.
+func (g *execGit) SetRemoteURL(repoPath, url string) error {
+	current, err := g.RemoteURL(repoPath)
+	if err != nil {
+		return err
+	}
+	if current == url {
+		return nil
+	}
+	if current == "" {
+		return run(repoPath, "remote", "add", "origin", url)
+	}
+	return run(repoPath, "remote", "set-url", "origin", url)
+}
+
+// PushBranch runs `git push -u origin <branch>` in the bare repo. The -u
+// sets the upstream tracking ref on the first push. Git only does that
+// automatically for the current branch of a checked-out worktree; pushing
+// from a bare repo leaves branch.<name>.remote unset, so `git status` in
+// .main would show no tracking info. -u is idempotent — on later pushes it
+// just re-asserts the same upstream. Like PushAll, a failed push is not
+// fatal — the work is committed locally — so the error carries git's stderr
+// for a clean message.
+func (g *execGit) PushBranch(repoPath, branch string) error {
+	_, stderr, err := outputFull(repoPath, "push", "-u", "origin", branch)
+	if err == nil {
+		return nil
+	}
+	return &PushError{Stderr: stderr, Err: err}
+}
+
+// FetchAll runs `git fetch origin` in the bare repo, updating the
+// refs/remotes/origin/* tracking branches that pull reads to decide what
+// can be fast-forwarded.
+func (g *execGit) FetchAll(repoPath string) error {
+	return run(repoPath, "fetch", "origin")
+}
+
+// IsAncestor reports whether ancestor is an ancestor of descendant (or
+// equal). `git merge-base --is-ancestor` exits 0 for yes and 1 for no; the
+// exit-1 case is a result, not an error.
+func (g *execGit) IsAncestor(repoPath, ancestor, descendant string) (bool, error) {
+	_, err := output(repoPath, "merge-base", "--is-ancestor", ancestor, descendant)
+	if err == nil {
+		return true, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, err
+}
+
+// FastForwardWorktree runs `git merge --ff-only origin/<branch>` in the
+// worktree, updating both the branch ref and the working files. It fails
+// when the worktree has uncommitted changes or the branch diverged; pull
+// classifies the failure by checking HasChanges afterwards.
+func (g *execGit) FastForwardWorktree(worktreePath, branch string) error {
+	return run(worktreePath, "merge", "--ff-only", "origin/"+branch)
+}
+
+// FastForwardRef points refs/heads/<branch> at refs/remotes/origin/<branch>
+// in the bare repo. pull uses it for branches that are not checked out in
+// any worktree, where there are no working files to refresh.
+func (g *execGit) FastForwardRef(repoPath, branch string) error {
+	return run(repoPath, "update-ref", "refs/heads/"+branch, "refs/remotes/origin/"+branch)
+}
+
+// ListRemoteBranches returns the remote branch names under
+// refs/remotes/origin/*, excluding the symbolic HEAD. `for-each-ref` prints
+// one ref per line with the origin/ prefix, which is stripped to give plain
+// branch names.
+func (g *execGit) ListRemoteBranches(repoPath string) ([]string, error) {
+	out, err := output(repoPath, "for-each-ref", "refs/remotes/origin", "--format=%(refname:short)")
+	if err != nil {
+		return nil, err
+	}
+	if out == "" {
+		return nil, nil
+	}
+	lines := strings.Split(out, "\n")
+	branches := make([]string, 0, len(lines))
+	for _, line := range lines {
+		name := strings.TrimPrefix(line, "origin/")
+		if name == "HEAD" {
+			continue
+		}
+		branches = append(branches, name)
+	}
+	return branches, nil
+}
+
 // LastCommitDate returns the time of the branch's most recent commit.
 // `git log <branch> -1 --format=%aI` prints the author date in strict ISO
 // 8601, which time.RFC3339 parses directly.
