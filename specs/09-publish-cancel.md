@@ -22,6 +22,15 @@ and commented with *why* (not *what*). No clever one-liners.
    behavior) and cleans up the worktree/branch per the user's choice.
    Cancel is local-only: no remote branch deletion — push/pull are the
    explicit sync verbs, and cancel must not hit the network.
+2b. **Cancel also cancels the project's outstanding tasks.** Every open task
+   (`Done == false`) gets a `Canceled` flag in the same write + commit as
+   the status change. Done tasks stay done — they were completed before the
+   project ended. Canceled tasks are hidden from `grind tasks` (both the
+   open view and `-a`), hidden from `wwd`'s task section, and excluded from
+   `wwd`'s task count and urgency. `done task N` on a canceled task refuses
+   with `Task #N is canceled.` The flag (not deletion) preserves the record
+   of what was planned — same philosophy as the project entry staying as a
+   record.
 3. **One standard cleanup prompt for BOTH commands.** After the operation,
    both verbs ask the same question:
    ```
@@ -110,6 +119,17 @@ Add to `ProjectEntry` in `internal/config/config.go`:
 // the file. Only the publish/cancel verbs write it; the config command
 // lists it read-only.
 Status string `json:"status,omitempty"`
+```
+
+Add to `Task` in the same file:
+
+```go
+// Canceled marks an open task that was abandoned when its project was
+// canceled. Canceled tasks are hidden from the task list and carry no
+// urgency; the flag preserves the record of what was planned. Done
+// tasks are never canceled — they were completed before the project
+// ended.
+Canceled bool `json:"canceled,omitempty"`
 ```
 
 ## Git interface additions (`internal/git`)
@@ -230,7 +250,8 @@ Flow:
    `Delete worktree and/or branch for '<name>'? [w/x/n] `. This prompt IS
    the confirmation — picking `x` is the explicit destructive choice.
 5. `projects.Service.Cancel(ws, name, cleanup)`:
-   - Set `entry.Status = "canceled"`, write `.projects.json`.
+   - Set `entry.Status = "canceled"`, mark every open task
+     `Canceled = true` (done tasks untouched), write `.projects.json`.
    - `s.Git.Commit(ws.MainWorktree, "Cancel project: "+name, ".projects.json")`.
    - Apply cleanup: `w` → `RemoveWorktree`; `x` → `RemoveWorktree` then
      `DeleteBranch`; `n` → nothing. The record is committed BEFORE the
@@ -250,6 +271,8 @@ Project 'my-blog' cancelled.
 
 - `projects.Service.List` skips entries with `Status == "canceled"`.
 - `status.Service.Status` skips entries with `Status == "canceled"`.
+- `tasks.Service.List` and `status` (task count + `TaskUrgency`) skip tasks
+  with `Canceled == true`; `tasks.Service.Complete` refuses them.
 
 ### `grind config <project>` shows status
 
@@ -356,9 +379,14 @@ helper that builds the frontmatter + body and returns the relative path
   - Cancel happy path per cleanup choice: status = `canceled`; commit
     `Cancel project: <name>` staging exactly `[".projects.json"]`; cleanup
     calls per choice.
+  - Cancel marks open tasks `Canceled = true` and leaves done tasks
+    untouched (the flag, never deletion).
   - Cancel nonexistent project; missing worktree.
   - `List` skips canceled projects but keeps published ones.
-- `internal/status`: `Status` skips canceled projects.
+- `internal/status`: `Status` skips canceled projects; task count and
+  `TaskUrgency` skip canceled tasks.
+- `internal/tasks`: `List` hides canceled tasks in both views; `Complete`
+  refuses a canceled task with `Task #N is canceled.`
 - `internal/config`: `flattenProject` includes `status` with its effective
   value; setting `status` fails with the invalid-key message. (Existing
   exact-entry assertions in `service_test.go` must be updated.)
@@ -377,8 +405,8 @@ helper that builds the frontmatter + body and returns the relative path
 - `grind publish <project>` merges the branch, exports the draft to
   `published/<name>.md`, marks the project published, and leaves `.main`
   clean.
-- `grind cancel <project>` marks the project canceled and leaves `.main`
-  clean.
+- `grind cancel <project>` marks the project canceled, cancels its
+  outstanding tasks, and leaves `.main` clean.
 - Both verbs end with the same `[w/x/n]` cleanup prompt; `-y` skips it and
   deletes both worktree and branch.
 - Canceled projects no longer appear in `list projects` or `wwd`.
