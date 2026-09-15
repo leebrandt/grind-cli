@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/leebrandt/grind/internal/grinderr"
 	"github.com/leebrandt/grind/internal/workspace"
@@ -45,6 +46,12 @@ func (f *fakeGit) CommitAll(worktreePath, message string) error { return nil }
 func (f *fakeGit) RemoteURL(repoPath string) (string, error) { return "", nil }
 
 func (f *fakeGit) PushAll(repoPath string) error { return nil }
+
+// LastCommitDate returns the zero time: idea operations never need commit
+// dates, so the stub keeps the fake a complete git.Git.
+func (f *fakeGit) LastCommitDate(repoPath, branch string) (time.Time, error) {
+	return time.Time{}, nil
+}
 
 // newTestWorkspace builds a workspace with an ideas dir, without touching git.
 func newTestWorkspace(t *testing.T) *workspace.Workspace {

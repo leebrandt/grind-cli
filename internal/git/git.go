@@ -11,6 +11,10 @@
 //     the config-on-main design).
 package git
 
+import (
+	"time"
+)
+
 // Git is the set of git operations grind needs.
 type Git interface {
 	// InitBare creates a bare repository at path.
@@ -55,6 +59,10 @@ type Git interface {
 	// committed locally — so the error carries git's stderr for a clean
 	// message instead of a hard failure.
 	PushAll(repoPath string) error
+	// LastCommitDate returns the time of the branch's most recent commit
+	// in the bare repo, or the zero time when the branch has no commits.
+	// The wwd dashboard uses it for the "Last Commit" column.
+	LastCommitDate(repoPath, branch string) (time.Time, error)
 }
 
 // PushError is returned by PushAll when git push fails. It carries git's

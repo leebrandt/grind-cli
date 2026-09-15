@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // setGitIdentity makes `git commit` work in tests without depending on the
@@ -573,5 +574,40 @@ func TestPushAllFailureCarriesStderr(t *testing.T) {
 	}
 	if !strings.Contains(pushErr.Stderr, "does not appear to be a git repository") {
 		t.Errorf("PushError.Stderr = %q", pushErr.Stderr)
+	}
+}
+
+func TestLastCommitDate(t *testing.T) {
+	setGitIdentity(t)
+	bareRepo, main := newBareRepoWithMain(t)
+	g := New()
+
+	// Pin the author date so the expected value is exact. %aI prints the
+	// AUTHOR date, so GIT_AUTHOR_DATE is the one to control.
+	t.Setenv("GIT_AUTHOR_DATE", "2026-09-14T10:00:00+00:00")
+	if err := os.WriteFile(filepath.Join(main, "note.md"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Commit(main, "Add note", "note.md"); err != nil {
+		t.Fatalf("Commit() error = %v", err)
+	}
+
+	got, err := g.LastCommitDate(bareRepo, "main")
+	if err != nil {
+		t.Fatalf("LastCommitDate() error = %v", err)
+	}
+	want := time.Date(2026, 9, 14, 10, 0, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Errorf("LastCommitDate() = %v, want %v", got, want)
+	}
+
+	// A branch that does not exist has no commits to date. That is an
+	// empty result (the dashboard shows "never"), not an error.
+	missing, err := g.LastCommitDate(bareRepo, "no-such-branch")
+	if err != nil {
+		t.Fatalf("LastCommitDate(missing branch) error = %v", err)
+	}
+	if !missing.IsZero() {
+		t.Errorf("LastCommitDate(missing branch) = %v, want zero time", missing)
 	}
 }

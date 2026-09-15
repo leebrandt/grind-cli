@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/leebrandt/grind/internal/config"
 	"github.com/leebrandt/grind/internal/git"
@@ -87,6 +88,12 @@ func (f *fakeGit) RemoteURL(repoPath string) (string, error) {
 func (f *fakeGit) PushAll(repoPath string) error {
 	f.pushAll++
 	return f.pushErr
+}
+
+// LastCommitDate returns the zero time: project and session operations
+// never need commit dates, so the stub keeps the fake a complete git.Git.
+func (f *fakeGit) LastCommitDate(repoPath, branch string) (time.Time, error) {
+	return time.Time{}, nil
 }
 
 // newTestWorkspace builds a workspace with config files and an ideas dir,

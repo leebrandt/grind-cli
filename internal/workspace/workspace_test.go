@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/leebrandt/grind/internal/grinderr"
 )
@@ -175,6 +176,12 @@ func (f *fakeGit) CommitAll(worktreePath, message string) error { return nil }
 func (f *fakeGit) RemoteURL(repoPath string) (string, error) { return "", nil }
 
 func (f *fakeGit) PushAll(repoPath string) error { return nil }
+
+// LastCommitDate returns the zero time: Init never touches commits' dates,
+// so workspace tests never need a real value.
+func (f *fakeGit) LastCommitDate(repoPath, branch string) (time.Time, error) {
+	return time.Time{}, nil
+}
 
 func TestInit(t *testing.T) {
 	dir := t.TempDir()

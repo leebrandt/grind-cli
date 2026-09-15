@@ -23,10 +23,14 @@ type fakeGit struct {
 	createBranch []string
 	dirtyPaths   map[string]bool
 	hasChanges   bool
-	commitAll    []fakeCommit
+	commitAll     []fakeCommit
 	remoteURL    string
 	pushAll      int
 	pushErr      error
+	// lastCommitDates maps branch name → last commit time. A branch with
+	// no entry (or a nil map) has no commits, like a project branch that
+	// was never pushed to.
+	lastCommitDates map[string]time.Time
 }
 
 type fakeCommit struct {
@@ -75,6 +79,13 @@ func (f *fakeGit) RemoteURL(repoPath string) (string, error) {
 func (f *fakeGit) PushAll(repoPath string) error {
 	f.pushAll++
 	return f.pushErr
+}
+
+// LastCommitDate returns the branch's recorded commit time, or the zero
+// time for a branch with no entry — mirroring the real implementation's
+// "no commits" result.
+func (f *fakeGit) LastCommitDate(repoPath, branch string) (time.Time, error) {
+	return f.lastCommitDates[branch], nil
 }
 
 // runInWorkspace creates a workspace in a temp dir, chdirs into it, and

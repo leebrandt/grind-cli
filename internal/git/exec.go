@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/leebrandt/grind/internal/grinderr"
 )
@@ -183,6 +184,33 @@ func (g *execGit) PushAll(repoPath string) error {
 		return nil
 	}
 	return &PushError{Stderr: stderr, Err: err}
+}
+
+// LastCommitDate returns the time of the branch's most recent commit.
+// `git log <branch> -1 --format=%aI` prints the author date in strict ISO
+// 8601, which time.RFC3339 parses directly.
+//
+// A branch that does not exist has no commits to date. That is an empty
+// result — the dashboard shows "never" — but only after ruling out real
+// git breakage, so the unknown-branch case is verified with show-ref
+// before swallowing the failure.
+func (g *execGit) LastCommitDate(repoPath, branch string) (time.Time, error) {
+	out, err := output(repoPath, "log", branch, "-1", "--format=%aI")
+	if err != nil {
+		exists, existsErr := branchExists(repoPath, branch)
+		if existsErr == nil && !exists {
+			return time.Time{}, nil
+		}
+		return time.Time{}, err
+	}
+	if out == "" {
+		return time.Time{}, nil
+	}
+	t, err := time.Parse(time.RFC3339, out)
+	if err != nil {
+		return time.Time{}, grinderr.WrapSystem(err, "parse commit date %q", out)
+	}
+	return t, nil
 }
 
 // branchExists reports whether refs/heads/<branch> exists in repoPath.

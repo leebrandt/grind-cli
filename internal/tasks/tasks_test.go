@@ -42,6 +42,12 @@ func (f *fakeGit) CommitAll(worktreePath, message string) error         { return
 func (f *fakeGit) RemoteURL(repoPath string) (string, error)           { return "", nil }
 func (f *fakeGit) PushAll(repoPath string) error                       { return nil }
 
+// LastCommitDate returns the zero time: task operations never need commit
+// dates, so the stub keeps the fake a complete git.Git.
+func (f *fakeGit) LastCommitDate(repoPath, branch string) (time.Time, error) {
+	return time.Time{}, nil
+}
+
 // Ensure the git package is linked in tests that reference the interface.
 var _ git.Git = (*fakeGit)(nil)
 
