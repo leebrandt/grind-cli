@@ -11,6 +11,7 @@ import (
 	"github.com/leebrandt/grind/internal/git"
 	"github.com/leebrandt/grind/internal/grinderr"
 	"github.com/leebrandt/grind/internal/ideas"
+	"github.com/leebrandt/grind/internal/invoice"
 	"github.com/leebrandt/grind/internal/projects"
 	"github.com/leebrandt/grind/internal/status"
 	"github.com/leebrandt/grind/internal/sync"
@@ -20,7 +21,7 @@ import (
 
 // version is the grind release version. Bump the patch number at the end of
 // each slice so `grind -v` tells you which build you are testing.
-const version = "0.90.7"
+const version = "0.90.8"
 
 // NewRootCmd builds the complete grind command tree. The git implementation
 // is injected so tests can substitute a fake.
@@ -29,6 +30,7 @@ func NewRootCmd(g git.Git) *cobra.Command {
 	projectsSvc := projects.NewService(g)
 	tasksSvc := tasks.NewService(g)
 	statusSvc := status.NewService(g)
+	invoiceSvc := invoice.NewService(g)
 	syncSvc := sync.NewService(g)
 	configSvc := config.NewService(g)
 
@@ -72,6 +74,7 @@ func NewRootCmd(g git.Git) *cobra.Command {
 	root.AddCommand(newConfigCmd(configSvc))
 	root.AddCommand(newPublishCmd(projectsSvc))
 	root.AddCommand(newCancelCmd(projectsSvc))
+	root.AddCommand(newInvoiceCmd(invoiceSvc))
 
 	return root
 }

@@ -74,7 +74,7 @@ func TestWriteReadRoundTrip(t *testing.T) {
 	cfg := Default()
 	cfg.DefaultBranch = "main"
 	cfg.ProjectTypes = []string{"blog", "code"}
-	cfg.Currency = "USD"
+	cfg.PaymentTerms = "Net 30"
 
 	if err := Write(path, cfg); err != nil {
 		t.Fatalf("Write: %v", err)
@@ -96,8 +96,40 @@ func TestWriteReadRoundTrip(t *testing.T) {
 	if len(got.ProjectTypes) != 2 || got.ProjectTypes[0] != "blog" {
 		t.Errorf("ProjectTypes = %v, want [blog code]", got.ProjectTypes)
 	}
-	if got.Currency != "USD" {
-		t.Errorf("Currency = %q, want USD", got.Currency)
+	if got.PaymentTerms != "Net 30" {
+		t.Errorf("PaymentTerms = %q, want Net 30", got.PaymentTerms)
+	}
+}
+
+// A v1 workspace has "currency" in its .grind.json. grind bills in USD only
+// and has no such field, so the key must be ignored rather than becoming an
+// error or reappearing when the config is written back.
+func TestReadIgnoresUnknownV1Keys(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".grind.json")
+	raw := `{"billing":{"roundTo":"hour","defaultRate":200},"currency":"EUR"}`
+	if err := os.WriteFile(path, []byte(raw), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := Read(path)
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if cfg.Billing.RoundTo != "hour" || cfg.Billing.DefaultRate != 200 {
+		t.Errorf("billing = %+v, want the values from the file", cfg.Billing)
+	}
+
+	// Writing it back must not resurrect the dropped key.
+	if err := Write(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(written), "currency") {
+		t.Errorf("rewritten config kept the currency key:\n%s", written)
 	}
 }
 

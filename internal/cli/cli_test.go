@@ -441,8 +441,8 @@ func TestVersionFlag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "0.90.7\n" {
-		t.Errorf("output = %q, want %q", out, "0.90.7\n")
+	if out != "0.90.8\n" {
+		t.Errorf("output = %q, want %q", out, "0.90.8\n")
 	}
 }
 
@@ -704,39 +704,14 @@ func TestShowCommand(t *testing.T) {
 	if !strings.Contains(out, "Type:    blog") {
 		t.Errorf("output = %q", out)
 	}
-	if !strings.Contains(out, "Rate:    150/hr (quarter-hour)") {
+	// grind bills in USD only, so the rate line always carries the symbol
+	// rather than a configurable code.
+	if !strings.Contains(out, "Rate:    $150/hr (quarter-hour)") {
 		t.Errorf("output = %q", out)
 	}
 	// The idea value is the H1 header, so show prints the title, not the
 	// full idea content (which lives in the project's .idea file).
 	if !strings.Contains(out, "My Blog") {
-		t.Errorf("output = %q", out)
-	}
-}
-
-func TestShowCommandWithCurrency(t *testing.T) {
-	fake, cleanup := runInWorkspace(t)
-	defer cleanup()
-
-	// Set a currency in .grind.json.
-	cfg := config.Default()
-	cfg.Currency = "$"
-	if err := config.Write(filepath.Join(".main", ".grind.json"), cfg); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := execute(t, fake, "new", "idea", "My Blog"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := execute(t, fake, "new", "project", "my-blog", "0"); err != nil {
-		t.Fatal(err)
-	}
-
-	out, err := execute(t, fake, "show", "my-blog")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(out, "Rate:    $150/hr (quarter-hour)") {
 		t.Errorf("output = %q", out)
 	}
 }

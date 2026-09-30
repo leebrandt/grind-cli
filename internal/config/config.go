@@ -43,12 +43,16 @@ type RemoteConfig struct {
 
 // GrindConfig is the typed shape of .grind.json. The fields beyond Billing
 // are part of the v1 schema even though later slices use them.
+//
+// There is deliberately no `currency` key, even though v1 had one: grind
+// bills in USD only. Keeping a setting that cannot change anything would let
+// a workspace claim one currency and bill in another. A v1 workspace that has
+// "currency" in .grind.json is simply ignored on read.
 type GrindConfig struct {
 	Billing       BillingConfig `json:"billing"`
 	DefaultBranch string        `json:"defaultBranch,omitempty"`
 	ProjectTypes  []string      `json:"projectTypes,omitempty"`
 	My            *MyConfig     `json:"my,omitempty"`
-	Currency      string        `json:"currency,omitempty"`
 	PaymentTerms  string        `json:"paymentTerms,omitempty"`
 	Remote        *RemoteConfig `json:"remote,omitempty"`
 }
@@ -169,6 +173,16 @@ type Session struct {
 	End      *time.Time `json:"end,omitempty"`
 	Duration int64      `json:"duration,omitempty"`
 	Rounded  int64      `json:"rounded,omitempty"`
+	// Invoiced marks a session that has been included in a generated
+	// invoice. Once true the session is never billed again. The flag (not
+	// deletion) keeps the record: .projects.json still shows what was
+	// worked and that it was billed, which is the audit trail behind the
+	// invoice files.
+	//
+	// omitempty keeps the field out of the file for the overwhelmingly
+	// common unbilled session, and a missing field means false, so
+	// workspaces created before invoicing existed need no migration.
+	Invoiced bool `json:"invoiced,omitempty"`
 }
 
 // BillingEntry is the per-project billing block. Each project carries its

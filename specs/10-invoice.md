@@ -75,6 +75,21 @@ and commented with *why* (not *what*). No clever one-liners.
     (`20260929T14-30-15`), which is unique per second and needs no counter to
     keep in sync. Sequential numbering (`INV-0001`) is a real requirement for
     some jurisdictions and belongs in its own slice if it is ever needed.
+16. **USD only — the `currency` config key is removed.** v1 had a `currency`
+    key. This slice deletes `GrindConfig.Currency`, drops `currency` from
+    `grind config` (get/set/list), and renders every amount with a hardcoded
+    `$` (`invoice.Symbol`). The alternative — keeping the key while ignoring
+    it — was rejected: `grind config currency EUR` would succeed and change
+    nothing, so the config file could claim one currency while the invoice
+    billed in another. For a single-currency tool there is no setting left to
+    get wrong. A v1 workspace carrying `"currency": "EUR"` is unaffected: the
+    unknown JSON key is dropped on read and never written back (this is a
+    real path, since slice 11 migrates v1 workspaces).
+17. **`show` no longer reads `.grind.json`.** The `currency` prefix was the
+    only reason it did, so that read is gone and the command is simpler. The
+    `Rate:` line now carries the `$` symbol — `Rate: $150/hr` — which makes
+    plain `show`, `show --billing`, and the invoice file all write money the
+    same way instead of `USD150/hr` sitting above `$150.00/hr`.
 
 ## Workspace layout
 
@@ -126,9 +141,12 @@ Invoiced bool `json:"invoiced,omitempty"`
 session, and `Invoiced == false` on a missing field means "not invoiced", so
 workspaces created before this slice need no migration.
 
-Nothing else changes. `MyConfig`, `ClientInfo`, `GrindConfig.Currency`, and
-`GrindConfig.PaymentTerms` already exist (added in spec 08) — this slice only
-*reads* them. `Client` is the invoice "TO" block and `My` the "FROM" block.
+Nothing else changes. `MyConfig`, `ClientInfo`, and `GrindConfig.PaymentTerms`
+already exist (added in spec 08) — this slice only *reads* them. `Client` is
+the invoice "TO" block and `My` the "FROM" block.
+
+**`GrindConfig.Currency` is removed.** v1 had a `currency` key; the rewrite
+does not, because grind bills in USD and only USD. See design decision 16.
 
 ## Package structure
 
@@ -169,8 +187,6 @@ type Invoice struct {
     From         string   // "FROM" block from .grind.json my.*
     To           string   // "TO" block from the project's client.*
     Rate         float64
-    Currency     string   // code from .grind.json, default "USD"
-    Symbol       string   // "$", "€", "£", or "<CODE> "
     PaymentTerms string   // verbatim from .grind.json, default "Net 30"
     InvoiceDate  string   // local YYYY-MM-DD
     DueDate      string   // local YYYY-MM-DD
@@ -201,12 +217,9 @@ Exported functions (all pure — this is the teaching surface of the slice):
 // a due date in the past.
 func DaysFromPaymentTerms(terms string) int
 
-// CurrencySymbol maps a currency code to the symbol used in amounts:
-// USD → "$", EUR → "€", GBP → "£". Any other code renders as the code
-// followed by a space ("CHF 120.00"), which is how that currency is
-// written anyway. An empty code yields "" (the default "USD" is applied
-// by the caller).
-func CurrencySymbol(code string) string
+// Symbol is the currency mark on every amount: "$". A constant, not a
+// lookup, because grind bills in USD only (decision 16).
+const Symbol = "$"
 ```
 
 Service method:
@@ -236,8 +249,8 @@ func (s *Service) Generate(ws *workspace.Workspace, name string, dryRun bool) (*
    randomized, so an unsorted map would produce a different invoice on every
    run and the committed file would churn. Sorting is not cosmetic here; it
    is what makes the output deterministic and diffable.
-6. Apply the default currency (`"USD"`) and default terms (`"Net 30"`) when
-   unset, then compute `DueDate` via `DaysFromPaymentTerms`.
+6. Apply the default terms (`"Net 30"`) when unset, then compute `DueDate` via
+   `DaysFromPaymentTerms`.
 7. Build the FROM/TO blocks. An empty block renders the v1 hint naming the
    exact `grind config` command that fills it in.
 8. If `dryRun` → return the `Invoice`, stop.
@@ -337,7 +350,6 @@ invoiceId: 20260929T14-30-15
 date: 2026-09-29
 due: 2026-10-29
 project: my-blog
-currency: USD
 rate: 150
 subtotal: 1087.50
 ---
@@ -404,13 +416,14 @@ canceled projects. v1 had this behind the same flag.
 ```
 $ grind show my-blog --billing
 Sessions:  12
-Total:     20.00h (3000.00)
-Billed:    12.75h (1912.50)
-Unbilled:  7.25h (1087.50)
-Rate:      150.00/hr (quarter-hour)
+Total:     20.00h ($3000.00)
+Billed:    12.75h ($1912.50)
+Unbilled:  7.25h ($1087.50)
+Rate:      $150.00/hr (quarter-hour)
 ```
 
-Without `--billing`, `show` behaves exactly as it does today (unchanged).
+Without `--billing`, `show` prints the idea as it always did, plus the
+`$`-prefixed `Rate:` line (decision 17). No session totals.
 
 ### `wwd` flags unbilled projects
 
@@ -437,8 +450,7 @@ checked first).
     `"Due on receipt"` → 0, `"due on receipt"` → 0, `"weird"` → 30,
     `""` → 30, `"  Net 7  "` (trimmed) → 7. This is the v1 regression guard
     for bug #4.
-  - `CurrencySymbol`: `"USD"` → `"$"`, `"EUR"` → `"€"`, `"GBP"` → `"£"`,
-    `"CHF"` → `"CHF "`, `""` → `""`.
+  - `Symbol` is `"$"` — a guard against a currency code creeping back in.
   - `dayLines`: groups by local date, sums seconds, **sorts ascending**
     (build the input out of date order and assert the output order — this is
     the regression guard against Go's randomized map iteration).
@@ -459,9 +471,15 @@ checked first).
     - `--dry-run` → invoice returned, but no commit, no file, and no
       session marked.
     - Project status ignored: works on `canceled` and `published`.
-    - Unconfigured currency/terms fall back to USD / "Net 30"; the due
-      date matches (`now + 30 days`, local).
+    - Unconfigured terms fall back to "Net 30"; the due date matches
+      (`now + 30 days`, local).
     - Nonexistent project → exact user error.
+- `internal/config`:
+  - `Set(paths, "currency", ...)` fails with the invalid-key error, and
+    `List` never shows a `currency` entry — the key is gone, not inert.
+  - `Read` tolerates a v1 `.grind.json` that still has a `"currency"`
+    property: it is ignored, and writing the config back does not put it
+    back. (Slice 11 migrates real v1 workspaces, so this path is live.)
 - `internal/status`: `HasUnbilled` is true when an ended uninvoiced session
   exists, false when all ended sessions are invoiced or none exist.
 - `internal/cli` with the fake git:
@@ -493,6 +511,10 @@ above:
   analogous to `NextTaskID`.
 - **Multiple rate tiers or expenses.** The `DayLine` grouping is the natural
   place to add a per-day rate or a non-session line item.
+- **Another currency.** `Symbol` becomes a value and `GrindConfig.Currency`
+  comes back. The change is contained: `renderMarkdown`, the `show` rate line,
+  and the `show --billing` block are the only three places that write an
+  amount.
 - **Tax / VAT.** One field in the frontmatter plus one line in the body.
 - **Emailing the invoice.** n8n already watches `published/`; a similar watch
   on `invoices/` is the same pattern.
@@ -512,6 +534,8 @@ above:
 - `wwd` colors projects with unbilled work yellow.
 - Billing works on canceled and published projects.
 - All error messages match the spec exactly; user errors exit 1.
+- Every amount is in USD and `grind config currency` is rejected — there is no
+  currency setting anywhere in the CLI.
 - No new module is added to `go.mod`.
 - AGENTS.md marks slice 10 done and gains the `invoice` row in the
   command-pattern table.

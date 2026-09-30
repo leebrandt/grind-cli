@@ -45,6 +45,12 @@ type Row struct {
 	LastCommit   string // TimeAgo of the branch's last commit, or "never"
 	IsActive     bool
 	TotalSeconds int64 // for sorting
+	// HasUnbilled is true when the project has billable sessions left
+	// (any ended session with Invoiced == false). It is a color signal
+	// only — the dashboard gains no column for it, because the number is
+	// one flag away via `show --billing` and a sixth column would widen
+	// every row for it.
+	HasUnbilled bool
 }
 
 // Status returns the dashboard rows, sorted by total worked seconds
@@ -90,12 +96,16 @@ func (s *Service) rowFor(ws *workspace.Workspace, name string, entry config.Proj
 	var latestStart time.Time
 	hasSession := false
 	isActive := false
+	hasUnbilled := false
 	for _, sess := range entry.Sessions {
 		// Active sessions have Rounded 0 (it is written at end time), so
 		// they contribute nothing to the worked total — matching the model.
 		total += sess.Rounded
 		if sess.End == nil {
 			isActive = true
+		} else if !sess.Invoiced {
+			// The same rule the invoice bills: ended and not yet invoiced.
+			hasUnbilled = true
 		}
 		// "Latest" is the newest Start, not the last array element: the
 		// sessions array is append-ordered, which is chronological in
@@ -140,6 +150,7 @@ func (s *Service) rowFor(ws *workspace.Workspace, name string, entry config.Proj
 		LastSession:  lastSession,
 		LastCommit:   lastCommitDisplay,
 		IsActive:     isActive,
+		HasUnbilled:  hasUnbilled,
 		TotalSeconds: total,
 	}, nil
 }

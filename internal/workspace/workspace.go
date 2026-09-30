@@ -113,7 +113,7 @@ func Init(g git.Git, dir string) error {
 
 	// Git does not track empty directories, so each gets a .gitkeep to make
 	// sure the layout exists after init.
-	for _, sub := range []string{"ideas", "journal", "published", "projects"} {
+	for _, sub := range []string{"ideas", "journal", "published", "projects", "invoices"} {
 		subDir := filepath.Join(mainWorktree, sub)
 		if err := os.MkdirAll(subDir, 0o755); err != nil {
 			return grinderr.WrapSystem(err, "create %s directory", sub)
@@ -131,6 +131,7 @@ func Init(g git.Git, dir string) error {
 		"journal/.gitkeep",
 		"published/.gitkeep",
 		"projects/.gitkeep",
+		"invoices/.gitkeep",
 	}
 	return g.Commit(mainWorktree, "Initialize grind workspace", paths...)
 }
@@ -155,6 +156,23 @@ func (w *Workspace) PublishedDir() string {
 // never collide at main's root.
 func (w *Workspace) ProjectsDir() string {
 	return filepath.Join(w.MainWorktree, "projects")
+}
+
+// InvoicesDir returns the directory holding generated invoices. It is a
+// top-level directory rather than projects/<name>/invoices because
+// projects/ holds merged work products (publish), not billing records —
+// one directory, two unrelated meanings, is exactly the kind of ambiguity
+// a workspace layout should not have.
+func (w *Workspace) InvoicesDir() string {
+	return filepath.Join(w.MainWorktree, "invoices")
+}
+
+// InvoiceDir returns the directory for one project's invoice with the
+// given id: invoices/<project>/<id>/. One directory per invoice keeps
+// re-generating a month of billing from overwriting last month's file, and
+// puts every project's invoices side by side for review.
+func (w *Workspace) InvoiceDir(project, id string) string {
+	return filepath.Join(w.MainWorktree, "invoices", project, id)
 }
 
 // GrindConfigPath returns the path to .grind.json.

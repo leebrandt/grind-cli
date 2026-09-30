@@ -346,6 +346,72 @@ func TestStatusSkipsCanceled(t *testing.T) {
 	}
 }
 
+func TestStatusHasUnbilled(t *testing.T) {
+	// HasUnbilled is the dashboard's "you have money on the table" signal.
+	// It follows the same rule the invoice bills: an ended session that has
+	// not been invoiced. An active session is not unbilled work — it has no
+	// Rounded seconds yet and nothing to bill for.
+	now := time.Now()
+	end := now.Add(-time.Hour)
+	invoicedEnd := now.Add(-2 * time.Hour)
+
+	tests := []struct {
+		name     string
+		sessions []config.Session
+		want     bool
+	}{
+		{
+			"no sessions",
+			nil,
+			false,
+		},
+		{
+			"active session only",
+			[]config.Session{{Start: now.Add(-time.Minute)}},
+			false,
+		},
+		{
+			"ended and invoiced",
+			[]config.Session{{Start: invoicedEnd, End: &end, Rounded: 3600, Invoiced: true}},
+			false,
+		},
+		{
+			"ended and not invoiced",
+			[]config.Session{{Start: invoicedEnd, End: &end, Rounded: 3600}},
+			true,
+		},
+		{
+			"one of several unbilled",
+			[]config.Session{
+				{Start: invoicedEnd, End: &end, Rounded: 3600, Invoiced: true},
+				{Start: now.Add(-time.Minute)},
+				{Start: invoicedEnd, End: &end, Rounded: 1800},
+			},
+			true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			projects := config.ProjectsConfig{
+				Version: 1,
+				Projects: map[string]config.ProjectEntry{
+					"my-blog": {Name: "my-blog", Sessions: tt.sessions},
+				},
+			}
+			ws := newTestWorkspace(t, projects)
+			svc := NewService(&fakeGit{})
+
+			rows, err := svc.Status(ws)
+			if err != nil {
+				t.Fatalf("Status() error = %v", err)
+			}
+			if rows[0].HasUnbilled != tt.want {
+				t.Errorf("HasUnbilled = %v, want %v", rows[0].HasUnbilled, tt.want)
+			}
+		})
+	}
+}
+
 func TestStatusSkipsCanceledTasks(t *testing.T) {
 	// A canceled task must not count as open work and must not drive
 	// urgency — it died with its project.

@@ -45,7 +45,8 @@ turns out wrong, raise it in conversation first.
 │   ├── .projects.json      # ALL project state (single file, versioned)
 │   ├── ideas/              # timestamped markdown idea files
 │   ├── journal/            # daily markdown entries
-│   └── published/          # final-draft exports (n8n picks these up)
+│   ├── published/          # final-draft exports (n8n picks these up)
+│   └── invoices/           # generated invoices, one dir per invoice
 └── <project>/              # project worktrees (one per project, own branch)
 ```
 
@@ -64,7 +65,8 @@ turns out wrong, raise it in conversation first.
 - Per-project billing rates are supported (each project entry carries its own
   `billing` block) — this is a hard requirement, not a nice-to-have.
 - `.grind.json` holds workspace-level config: billing defaults, project types,
-  professional info, currency, payment terms, remote URL, default branch.
+  professional info, payment terms, remote URL, default branch. There is no
+  currency key — grind bills in USD (see "Invoicing").
 - Config files are JSON with 2-space indentation, written **atomically**
   (temp file + `os.Rename`).
 
@@ -146,6 +148,7 @@ verb set, each verb means exactly one thing:
 | `push` / `pull` | sync with remote | `grind push`, `grind push my-blog`, `grind push all`, `grind pull` |
 | `reject` / `prune` | idea lifecycle | `reject idea 3`, `prune ideas` |
 | `publish` / `cancel` | project lifecycle | `publish my-blog`, `cancel my-blog` |
+| `invoice` | bill billable work | `invoice my-blog`, `invoice my-blog -n` |
 | `read` | print to stdout | `read journal` |
 | `done` | complete a task | `done task 3` |
 | `config` | get/set/list config | `grind config`, `grind config billing.defaultRate 200`, `grind config my-blog billing.rate 250` |
@@ -168,6 +171,38 @@ Rules:
 markdown file (frontmatter + body) into `published/`. An n8n workflow watches
 that directory and runs the content-marketing pipeline (SubStack, blog,
 social). Grind only produces the draft; n8n does everything else.
+
+### Invoicing
+
+- Grind bills in **USD and only USD**. There is no `currency` config key and
+  no currency code in the state file; `invoice.Symbol` is the hardcoded `$`.
+  v1's `currency` key was deleted rather than left inert, because a setting
+  that succeeds and changes nothing is worse than one that is rejected. A v1
+  `.grind.json` that still carries `"currency"` is harmless: the unknown JSON
+  key is dropped on read and never written back (slice 11 migrates v1).
+- `grind invoice <project>` bills the sessions that are **ended and not yet
+  invoiced**. Billable time is `Session.Rounded` (the rounded seconds written
+  at end time), never `Session.Duration` — the rounding already happened.
+- The rule is deliberately status-agnostic: active, canceled and published
+  projects all invoice, because the sessions are already real work. Only the
+  end and the `invoiced` flag matter.
+- Each session is flipped to `invoiced: true`, and the generated markdown lands
+  in `.main/invoices/<project>/<timestamp>/invoice.md`. Both the invoice file
+  and `.projects.json` are committed in one commit, so a half-invoiced
+  workspace is not a state the user can reach.
+- `Session.Invoiced` is per session, not a date or amount watermark. Anything
+  coarser re-bills work that has already gone out the door.
+- Dates are **local**: the invoice id, the invoice date, the due date and the
+  per-day breakdown all come from the local clock. A session is grouped into
+  the day its `Start` falls on.
+- `grind show <project> --billing` prints the billed/unbilled split, and `wwd`
+  paints a project yellow while it has unbilled work — the two ways to ask
+  "what is still unbillable?" without writing an invoice.
+- `Generate` takes `now` as a parameter and the whole package is pure
+  (no clock, no I/O) so the day-boundary, ordering and parsing rules are
+  testable. The one caller is the CLI, which passes `time.Now()`. A zero `now`
+  is *not* silently replaced with the clock — a date that silently comes from
+  somewhere else is a date nobody can reason about.
 
 ### Migration (future slice)
 
@@ -193,7 +228,7 @@ and what's next.
 | 7 | Push/pull | ✅ done |
 | 8 | Config | ✅ done |
 | 9 | Publish/cancel | ✅ done |
-| 10 | Invoice | ⬜ |
+| 10 | Invoice | ✅ done |
 | 11 | Migrate (v1 workspace conversion) | ⬜ |
 
 ## Build & test

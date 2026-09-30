@@ -74,8 +74,13 @@ func divider() string {
 
 // renderStatusTable writes the status table: one row per project, sorted
 // by the service (worked time descending). Colors: the project name is
-// green while a session is active; the task count is red when any task is
-// overdue, yellow when one is due today.
+// green while a session is active and yellow while billable work is left
+// unbilled; the task count is red when any task is overdue, yellow when one
+// is due today.
+//
+// An active session outranks unbilled work: green is checked first, so a
+// project being worked on right now stays green even if it has unbilled
+// sessions behind it (v1 checked isActive first too).
 //
 // The table is padded by hand rather than rendered through tabwriter:
 // tabwriter counts ANSI codes toward the cell width, so a colored cell in
@@ -105,8 +110,11 @@ func renderStatusTable(out io.Writer, rows []status.Row, palette color.Palette) 
 		// Color is applied AFTER padding: the visible text is already
 		// column-width wide, so the ANSI codes cannot shift it.
 		name := padRight(row.Name, widths[0])
-		if row.IsActive {
+		switch {
+		case row.IsActive:
 			name = palette.Green(name)
+		case row.HasUnbilled:
+			name = palette.Yellow(name)
 		}
 		taskCount := padRight(strconv.Itoa(row.TaskCount), widths[2])
 		switch row.TaskUrgency {

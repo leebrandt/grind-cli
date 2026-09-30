@@ -60,7 +60,6 @@ var workspaceKeys = []string{
 	"my.phone",
 	"my.email",
 	"my.taxId",
-	"currency",
 	"paymentTerms",
 	"remote.url",
 }
@@ -250,9 +249,6 @@ func flattenConfig(cfg GrindConfig) []Entry {
 	if cfg.My != nil {
 		entries = appendMyEntries(entries, cfg.My)
 	}
-	if cfg.Currency != "" {
-		entries = append(entries, Entry{Key: "currency", Value: cfg.Currency})
-	}
 	if cfg.PaymentTerms != "" {
 		entries = append(entries, Entry{Key: "paymentTerms", Value: cfg.PaymentTerms})
 	}
@@ -385,8 +381,6 @@ func setWorkspaceKey(cfg *GrindConfig, key, value string) error {
 	case "my.taxId":
 		cfg.My = ensureMy(cfg.My)
 		cfg.My.TaxID = value
-	case "currency":
-		cfg.Currency = value
 	case "paymentTerms":
 		cfg.PaymentTerms = value
 	case "remote.url":

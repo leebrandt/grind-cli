@@ -256,7 +256,6 @@ func TestListConfiguredSortedAndCommaJoined(t *testing.T) {
 	cfg := Default()
 	cfg.ProjectTypes = []string{"blog", "code"}
 	cfg.My = &MyConfig{Name: "Lee", Email: "lee@example.com"}
-	cfg.Currency = "USD"
 	cfg.PaymentTerms = "Net 30"
 	cfg.Remote = &RemoteConfig{URL: "git@example.com:repo.git"}
 	cfg.DefaultBranch = "main"
@@ -270,7 +269,6 @@ func TestListConfiguredSortedAndCommaJoined(t *testing.T) {
 	want := []Entry{
 		{Key: "billing.defaultRate", Value: "150"},
 		{Key: "billing.roundTo", Value: "quarter-hour"},
-		{Key: "currency", Value: "USD"},
 		{Key: "defaultBranch", Value: "main"},
 		{Key: "my.email", Value: "lee@example.com"},
 		{Key: "my.name", Value: "Lee"},
@@ -428,13 +426,26 @@ func TestSetMyFields(t *testing.T) {
 	}
 }
 
-func TestSetCurrencyAndPaymentTerms(t *testing.T) {
+func TestSetCurrencyIsRejected(t *testing.T) {
+	// grind bills in USD only, so there is no currency key. v1 had one, and
+	// a user carrying over muscle memory from v1 must get a clear "no"
+	// rather than a setting that silently does nothing.
 	paths, fake := newTestPaths(t)
 	svc := NewService(fake)
 
-	if err := svc.Set(paths, "currency", "USD"); err != nil {
-		t.Fatal(err)
+	err := svc.Set(paths, "currency", "USD")
+	if err == nil {
+		t.Fatal("Set(currency) succeeded, want an invalid-key error")
 	}
+	if !strings.Contains(err.Error(), "Invalid key for workspace config: currency") {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestSetPaymentTerms(t *testing.T) {
+	paths, fake := newTestPaths(t)
+	svc := NewService(fake)
+
 	if err := svc.Set(paths, "paymentTerms", "Net 30"); err != nil {
 		t.Fatal(err)
 	}
@@ -442,9 +453,6 @@ func TestSetCurrencyAndPaymentTerms(t *testing.T) {
 	cfg, err := Read(paths.ConfigPath)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if cfg.Currency != "USD" {
-		t.Errorf("Currency = %q, want USD", cfg.Currency)
 	}
 	if cfg.PaymentTerms != "Net 30" {
 		t.Errorf("PaymentTerms = %q, want Net 30", cfg.PaymentTerms)

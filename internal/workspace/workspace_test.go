@@ -118,6 +118,12 @@ func TestPathHelpers(t *testing.T) {
 		{"JournalDir", ws.JournalDir(), "/ws/.main/journal"},
 		{"PublishedDir", ws.PublishedDir(), "/ws/.main/published"},
 		{"ProjectsDir", ws.ProjectsDir(), "/ws/.main/projects"},
+		{"InvoicesDir", ws.InvoicesDir(), "/ws/.main/invoices"},
+		{
+			"InvoiceDir",
+			ws.InvoiceDir("my-blog", "20260929T14-30-15"),
+			"/ws/.main/invoices/my-blog/20260929T14-30-15",
+		},
 		{"GrindConfigPath", ws.GrindConfigPath(), "/ws/.main/.grind.json"},
 		{"ProjectsConfigPath", ws.ProjectsConfigPath(), "/ws/.main/.projects.json"},
 		{"ProjectWorktreePath", ws.ProjectWorktreePath("my-blog"), "/ws/my-blog"},
@@ -229,7 +235,7 @@ func TestInit(t *testing.T) {
 		t.Errorf("AddWorktree path = %q", fake.addWorktreeArgs[0][1])
 	}
 
-	// The main worktree must contain the config files and the four dirs.
+	// The main worktree must contain the config files and the five dirs.
 	main := filepath.Join(dir, ".main")
 	for _, path := range []string{
 		filepath.Join(main, ".grind.json"),
@@ -238,6 +244,7 @@ func TestInit(t *testing.T) {
 		filepath.Join(main, "journal", ".gitkeep"),
 		filepath.Join(main, "published", ".gitkeep"),
 		filepath.Join(main, "projects", ".gitkeep"),
+		filepath.Join(main, "invoices", ".gitkeep"),
 	} {
 		if _, err := os.Stat(path); err != nil {
 			t.Errorf("expected %s to exist: %v", path, err)
@@ -251,8 +258,8 @@ func TestInit(t *testing.T) {
 	if c.message != "Initialize grind workspace" {
 		t.Errorf("commit message = %q", c.message)
 	}
-	if len(c.paths) != 6 {
-		t.Errorf("commit paths = %v, want 6 specific files", c.paths)
+	if len(c.paths) != 7 {
+		t.Errorf("commit paths = %v, want 7 specific files", c.paths)
 	}
 }
 
