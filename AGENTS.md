@@ -127,6 +127,31 @@ turns out wrong, raise it in conversation first.
   the URL travels with the workspace instead of being a per-machine
   artifact. No URL anywhere → user error.
 
+### Time
+
+- **No code calls `time.Now()` directly.** Everything asks a
+  `clock.Clock` (`internal/clock`). Production wires `clock.Real{}`; a
+  test wires `clock.Fake` and sets the time. `NewRootCmdWithClock` takes
+  one clock and hands the same instance to every service, so a command
+  run is one instant, not twelve.
+- The interface has exactly one method because that is all grind needs.
+  The ecosystem versions (`clockwork`, `benbjohnson/clock`) also carry
+  `After`, `Sleep` and `Timer` for code that *waits* on time; grind has
+  none, so they are absent. **A seam should be as small as the dependency
+  really is.**
+- Services default to `clock.Real{}` in `NewService`. Nothing builds a
+  service any other way, so a nil clock is unreachable — and every test
+  that does not care about time keeps working untouched.
+- Where a function can simply *take* the instant, it does, and no clock
+  is involved: `invoice.Generate(ws, name, dryRun, now)` takes a
+  `time.Time`, because plain data needs no abstraction. Reach for the
+  clock only where code reads the time for itself.
+- A test that needs a date asserts an exact date — `2026-09-30.md`, not
+  `TodayFilename(time.Now())`. Asserting "roughly now" is how the status
+  tests rotted the first time. Pinning the clock also makes the suite
+  timezone-proof, because a fixed local instant renders as the same
+  YYYY-MM-DD under any `TZ`.
+
 ### Error handling
 
 - Typed errors: user errors exit 1, system errors exit 2, unexpected exit 99.

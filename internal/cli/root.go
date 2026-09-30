@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/leebrandt/grind/internal/clock"
 	"github.com/leebrandt/grind/internal/config"
 	"github.com/leebrandt/grind/internal/git"
 	"github.com/leebrandt/grind/internal/grinderr"
@@ -25,7 +26,15 @@ const version = "0.90.8"
 
 // NewRootCmd builds the complete grind command tree. The git implementation
 // is injected so tests can substitute a fake.
+// NewRootCmd builds the real command tree, reading the wall clock.
 func NewRootCmd(g git.Git) *cobra.Command {
+	return NewRootCmdWithClock(g, clock.Real{})
+}
+
+// NewRootCmdWithClock builds the command tree against a specific clock.
+// Production passes clock.Real; a test passes clock.Fake so the whole CLI
+// can be exercised at a known instant.
+func NewRootCmdWithClock(g git.Git, clk clock.Clock) *cobra.Command {
 	ideasSvc := ideas.NewService(g)
 	projectsSvc := projects.NewService(g)
 	tasksSvc := tasks.NewService(g)
@@ -33,6 +42,14 @@ func NewRootCmd(g git.Git) *cobra.Command {
 	invoiceSvc := invoice.NewService(g)
 	syncSvc := sync.NewService(g)
 	configSvc := config.NewService(g)
+
+	// One clock for the whole process. Every service defaults to the wall
+	// clock on its own, so the overrides here are what make the tree a
+	// single consistent point in time rather than twelve separate ones.
+	ideasSvc.Clock = clk
+	projectsSvc.Clock = clk
+	tasksSvc.Clock = clk
+	statusSvc.Clock = clk
 
 	root := &cobra.Command{
 		Use:     "grind",
@@ -59,7 +76,7 @@ func NewRootCmd(g git.Git) *cobra.Command {
 	root.AddCommand(newIdeasAliasCmd(ideasSvc))
 	root.AddCommand(newProjectsAliasCmd(projectsSvc))
 	root.AddCommand(newTasksAliasCmd(tasksSvc))
-	root.AddCommand(newEditCmd(ideasSvc, projectsSvc))
+	root.AddCommand(newEditCmd(ideasSvc, projectsSvc, clk))
 	root.AddCommand(newRejectCmd(ideasSvc))
 	root.AddCommand(newPruneCmd(ideasSvc))
 	root.AddCommand(newShowCmd(projectsSvc))
@@ -68,13 +85,13 @@ func NewRootCmd(g git.Git) *cobra.Command {
 	root.AddCommand(newPushCmd(syncSvc))
 	root.AddCommand(newPullCmd(syncSvc))
 	root.AddCommand(newDoneCmd(tasksSvc))
-	root.AddCommand(newJournalAliasCmd())
+	root.AddCommand(newJournalAliasCmd(clk))
 	root.AddCommand(newReadCmd())
 	root.AddCommand(newWwdCmd(statusSvc, tasksSvc))
 	root.AddCommand(newConfigCmd(configSvc))
 	root.AddCommand(newPublishCmd(projectsSvc))
 	root.AddCommand(newCancelCmd(projectsSvc))
-	root.AddCommand(newInvoiceCmd(invoiceSvc))
+	root.AddCommand(newInvoiceCmd(invoiceSvc, clk))
 
 	return root
 }

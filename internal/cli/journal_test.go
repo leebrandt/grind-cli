@@ -7,15 +7,21 @@ import (
 	"testing"
 	"time"
 
-	"github.com/leebrandt/grind/internal/journal"
+	"github.com/leebrandt/grind/internal/clock"
 )
+
+// cliNow is the instant the CLI tests that care about dates run at. Pair it
+// with executeAt, and "today" is a fact.
+func cliNow() *clock.Fake {
+	return clock.NewFake(time.Date(2026, 9, 30, 14, 5, 0, 0, time.Local))
+}
 
 func TestEditJournalCommand(t *testing.T) {
 	fake, cleanup := runInWorkspace(t)
 	defer cleanup()
 
 	logFile := recordingEditor(t)
-	if _, err := execute(t, fake, "edit", "journal"); err != nil {
+	if _, err := executeAt(t, fake, cliNow(), "edit", "journal"); err != nil {
 		t.Fatalf("edit journal: %v", err)
 	}
 
@@ -23,10 +29,9 @@ func TestEditJournalCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The editor must have been called with today's journal path. The date
-	// is computed from the local clock, not hardcoded, so the test does not
-	// rot.
-	wantSuffix := filepath.Join(".main", "journal", journal.TodayFilename(time.Now()))
+	// The CLI is driven at a fixed instant, so the journal path is a known
+	// filename. Nothing here has to be recomputed from the real clock.
+	wantSuffix := filepath.Join(".main", "journal", "2026-09-30.md")
 	if !strings.HasSuffix(strings.TrimSpace(string(data)), wantSuffix) {
 		t.Errorf("editor arg = %q, want suffix %q", strings.TrimSpace(string(data)), wantSuffix)
 	}
@@ -37,7 +42,7 @@ func TestJournalAliasCommand(t *testing.T) {
 	defer cleanup()
 
 	logFile := recordingEditor(t)
-	if _, err := execute(t, fake, "journal"); err != nil {
+	if _, err := executeAt(t, fake, cliNow(), "journal"); err != nil {
 		t.Fatalf("journal: %v", err)
 	}
 
@@ -45,7 +50,7 @@ func TestJournalAliasCommand(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantSuffix := filepath.Join(".main", "journal", journal.TodayFilename(time.Now()))
+	wantSuffix := filepath.Join(".main", "journal", "2026-09-30.md")
 	if !strings.HasSuffix(strings.TrimSpace(string(data)), wantSuffix) {
 		t.Errorf("editor arg = %q, want suffix %q", strings.TrimSpace(string(data)), wantSuffix)
 	}

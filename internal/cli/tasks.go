@@ -44,7 +44,7 @@ func newTaskCmd(projectsSvc *projects.Service, svc *tasks.Service) *cobra.Comman
 			rawDue, _ := cmd.Flags().GetString("due")
 			dueDate := ""
 			if rawDue != "" {
-				dueDate, err = dates.ParseDate(rawDue, time.Now())
+				dueDate, err = dates.ParseDate(rawDue, svc.Clock.Now())
 				if err != nil {
 					return err
 				}
@@ -114,7 +114,7 @@ func listTasksRunE(svc *tasks.Service) func(cmd *cobra.Command, args []string) e
 		}
 
 		out := cmd.OutOrStdout()
-		return renderTaskList(out, rows, projectName, all, color.New(out))
+		return renderTaskList(out, rows, projectName, all, svc.Today(), color.New(out))
 	}
 }
 
@@ -123,7 +123,9 @@ func listTasksRunE(svc *tasks.Service) func(cmd *cobra.Command, args []string) e
 // match, otherwise the aligned table. projectName == "" selects the
 // all-projects view (Project column shown); all includes completed
 // tasks and changes the empty state's wording.
-func renderTaskList(out io.Writer, rows []tasks.TaskRow, projectName string, all bool, palette color.Palette) error {
+// today is passed in rather than read from the clock: a renderer that
+// takes data is testable, and the caller decides what day it is.
+func renderTaskList(out io.Writer, rows []tasks.TaskRow, projectName string, all bool, today string, palette color.Palette) error {
 	if len(rows) == 0 {
 		switch {
 		case projectName != "" && !all:
@@ -135,9 +137,6 @@ func renderTaskList(out io.Writer, rows []tasks.TaskRow, projectName string, all
 		}
 		return nil
 	}
-
-	// "Today" is the LOCAL date — the v1 UTC bug does not come back.
-	today := time.Now().Format("2006-01-02")
 
 	// Column widths come from the widest PLAIN cell (header included), so
 	// the padding math never sees ANSI codes. The table is padded by hand

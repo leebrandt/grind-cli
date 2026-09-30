@@ -676,7 +676,7 @@ func addProjectEntry(t *testing.T, ws *workspace.Workspace, name, status string)
 		Type:      "blog",
 		Idea:      "My Blog",
 		Billing:   config.BillingEntry{RoundTo: "quarter-hour", Rate: 150},
-		CreatedAt: time.Now().UTC().Truncate(time.Second),
+		CreatedAt: testNow.UTC().Truncate(time.Second),
 		Status:    status,
 	}
 	projects.Projects[name] = entry

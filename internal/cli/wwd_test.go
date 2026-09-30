@@ -12,22 +12,29 @@ func TestWwdCommand(t *testing.T) {
 	defer cleanup()
 	createProject(t, fake, "my-blog")
 
+	// Everything below runs at one fixed instant, and every "ago" in the
+	// expected output is measured from it. Under the real clock these
+	// assertions only held because the offsets were small; pinned, they
+	// hold because they are arithmetic.
+	clk := cliNow()
+
 	// Backfill 8h: creates one ended session [now-8h, now] with 8h
 	// rounded, so the row has deterministic values — Worked "8.0h",
 	// Last Session "8h ago".
-	if _, err := execute(t, fake, "save", "my-blog", "-t", "8h"); err != nil {
+	if _, err := executeAt(t, fake, clk, "save", "my-blog", "-t", "8h"); err != nil {
 		t.Fatalf("save my-blog -t 8h: %v", err)
 	}
-	if _, err := execute(t, fake, "new", "task", "my-blog", "Write intro", "-d", "2026-09-20"); err != nil {
+	if _, err := executeAt(t, fake, clk, "new", "task", "my-blog", "Write intro", "-d", "2020-01-01"); err != nil {
 		t.Fatalf("new task: %v", err)
 	}
-	// The fake git reports the branch's last commit as 1 day ago.
+	// The fake git reports the branch's last commit as 1 day before the
+	// instant everything else ran at.
 	fake.lastCommitDates = map[string]time.Time{
-		"my-blog": time.Now().Add(-24 * time.Hour),
+		"my-blog": clk.Now().Add(-24 * time.Hour),
 	}
 
 	commitsBefore := len(fake.commits)
-	out, err := execute(t, fake, "wwd")
+	out, err := executeAt(t, fake, clk, "wwd")
 	if err != nil {
 		t.Fatalf("wwd: %v", err)
 	}
@@ -50,7 +57,7 @@ func TestWwdCommand(t *testing.T) {
 	}
 
 	// Part 3: the open-task list, same rendering as `list tasks`.
-	for _, want := range []string{"#", "Project", "Task", "Due", "100", "Write intro", "2026-09-20"} {
+	for _, want := range []string{"#", "Project", "Task", "Due", "100", "Write intro", "2020-01-01"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("wwd output = %q, missing %q", out, want)
 		}

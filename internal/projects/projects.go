@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/leebrandt/grind/internal/clock"
 	"github.com/leebrandt/grind/internal/config"
 	"github.com/leebrandt/grind/internal/git"
 	"github.com/leebrandt/grind/internal/grinderr"
@@ -28,11 +29,19 @@ import (
 // fake and verify exactly which operations run and in what order.
 type Service struct {
 	Git git.Git
+
+	// Clock is what this service stamps records with. Tests replace it
+	// with a clock.Fake to control the time.
+	Clock clock.Clock
 }
 
 // NewService returns a Service backed by g.
+// NewService returns a Service backed by g, reading the wall clock.
+// Tests that care about time overwrite the Clock field with a
+// clock.Fake; because nothing builds a Service without this
+// constructor, a nil Clock is not reachable.
 func NewService(g git.Git) *Service {
-	return &Service{Git: g}
+	return &Service{Git: g, Clock: clock.Real{}}
 }
 
 // Cleanup describes what to do with a project's worktree and branch after
@@ -165,7 +174,7 @@ func (s *Service) Create(ws *workspace.Workspace, name, projectType, ideaFilenam
 		},
 		// Truncate to seconds so the stored timestamp matches the RFC3339
 		// shape in the spec (no fractional seconds).
-		CreatedAt: time.Now().UTC().Truncate(time.Second),
+		CreatedAt: s.Clock.Now().UTC().Truncate(time.Second),
 	}
 	projects.Projects[name] = *entry
 

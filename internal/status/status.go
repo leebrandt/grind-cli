@@ -16,6 +16,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/leebrandt/grind/internal/clock"
 	"github.com/leebrandt/grind/internal/config"
 	"github.com/leebrandt/grind/internal/dates"
 	"github.com/leebrandt/grind/internal/git"
@@ -26,11 +27,19 @@ import (
 // writes .projects.json or commits.
 type Service struct {
 	Git git.Git
+
+	// Clock is what "today" means here. Tests replace it with a
+	// clock.Fake to control the time.
+	Clock clock.Clock
 }
 
 // NewService returns a Service backed by g.
+// NewService returns a Service backed by g, reading the wall clock.
+// Tests that care about time overwrite the Clock field with a
+// clock.Fake; because nothing builds a Service without this
+// constructor, a nil Clock is not reachable.
 func NewService(g git.Git) *Service {
-	return &Service{Git: g}
+	return &Service{Git: g, Clock: clock.Real{}}
 }
 
 // Row is one project's line in the status table. The rendered strings
@@ -62,7 +71,7 @@ func (s *Service) Status(ws *workspace.Workspace) ([]Row, error) {
 		return nil, err
 	}
 
-	now := time.Now()
+	now := s.Clock.Now()
 	rows := make([]Row, 0, len(projects.Projects))
 	for name, entry := range projects.Projects {
 		// Canceled projects disappear from the dashboard, matching v1 where

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/leebrandt/grind/internal/clock"
 	"github.com/leebrandt/grind/internal/config"
 	"github.com/leebrandt/grind/internal/git"
 	"github.com/leebrandt/grind/internal/grinderr"
@@ -211,7 +212,16 @@ func runInWorkspace(t *testing.T) (*fakeGit, func()) {
 // stdout.
 func execute(t *testing.T, fake *fakeGit, args ...string) (string, error) {
 	t.Helper()
-	root := NewRootCmd(fake)
+	return executeAt(t, fake, clock.Real{}, args...)
+}
+
+// executeAt runs the command tree at a specific instant. Anything the CLI
+// derives from the clock — a journal filename, a task's due date, "today"
+// in the dashboard — becomes an exact fact rather than whatever the day
+// happens to be.
+func executeAt(t *testing.T, fake *fakeGit, clk clock.Clock, args ...string) (string, error) {
+	t.Helper()
+	root := NewRootCmdWithClock(fake, clk)
 	var buf bytes.Buffer
 	root.SetOut(&buf)
 	root.SetErr(&buf)

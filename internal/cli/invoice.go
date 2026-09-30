@@ -3,8 +3,8 @@ package cli
 import (
 	"fmt"
 	"path/filepath"
-	"time"
 
+	"github.com/leebrandt/grind/internal/clock"
 	"github.com/leebrandt/grind/internal/invoice"
 	"github.com/leebrandt/grind/internal/workspace"
 	"github.com/spf13/cobra"
@@ -20,7 +20,7 @@ import (
 //
 // The verb only reads and writes .main, so unlike publish/cancel it needs
 // no clean-worktree precondition.
-func newInvoiceCmd(svc *invoice.Service) *cobra.Command {
+func newInvoiceCmd(svc *invoice.Service, clk clock.Clock) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "invoice <project>",
 		Short: "Bill unbilled sessions as a markdown invoice",
@@ -35,7 +35,7 @@ func newInvoiceCmd(svc *invoice.Service) *cobra.Command {
 
 			// The clock is read here and passed in, so every date on the
 			// invoice comes from one instant and tests can pin it.
-			inv, err := svc.Generate(ws, name, dryRun, time.Now())
+			inv, err := svc.Generate(ws, name, dryRun, clk.Now())
 			if err != nil {
 				return err
 			}

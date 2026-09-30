@@ -16,8 +16,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
+	"github.com/leebrandt/grind/internal/clock"
 	"github.com/leebrandt/grind/internal/editor"
 	"github.com/leebrandt/grind/internal/git"
 	"github.com/leebrandt/grind/internal/grinderr"
@@ -70,11 +70,19 @@ type RejectResult struct {
 // and verify exactly which paths get staged.
 type Service struct {
 	Git git.Git
+
+	// Clock is what an idea's filename timestamp comes from. Tests
+	// replace it with a clock.Fake to control the time.
+	Clock clock.Clock
 }
 
 // NewService returns a Service backed by g.
+// NewService returns a Service backed by g, reading the wall clock.
+// Tests that care about time overwrite the Clock field with a
+// clock.Fake; because nothing builds a Service without this
+// constructor, a nil Clock is not reachable.
 func NewService(g git.Git) *Service {
-	return &Service{Git: g}
+	return &Service{Git: g, Clock: clock.Real{}}
 }
 
 // Create writes a new idea file and commits it. When title is empty the
@@ -102,7 +110,7 @@ func (s *Service) Create(ws *workspace.Workspace, title string) (string, error) 
 	// the same second would collide, so append a counter until the name is
 	// free. The "_1" suffix sorts after the plain timestamp, so
 	// chronological order is preserved.
-	base := time.Now().Format("20060102150405")
+	base := s.Clock.Now().Format("20060102150405")
 	filename := uniqueFilename(ws.IdeasDir(), base)
 	path := filepath.Join(ws.IdeasDir(), filename)
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {

@@ -58,7 +58,7 @@ func newWwdCmd(statusSvc *status.Service, tasksSvc *tasks.Service) *cobra.Comman
 			if err != nil {
 				return err
 			}
-			return renderTaskList(out, taskRows, "", false, palette)
+			return renderTaskList(out, taskRows, "", false, tasksSvc.Today(), palette)
 		},
 	}
 	return cmd

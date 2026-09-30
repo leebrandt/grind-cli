@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/leebrandt/grind/internal/clock"
 	"github.com/leebrandt/grind/internal/config"
 	"github.com/leebrandt/grind/internal/grinderr"
 	"github.com/leebrandt/grind/internal/workspace"
@@ -24,7 +25,7 @@ func addProject(t *testing.T, ws *workspace.Workspace, name string, sessions ...
 		Type:      "blog",
 		Idea:      "# Test\n",
 		Billing:   config.BillingEntry{RoundTo: "quarter-hour", Rate: 150},
-		CreatedAt: time.Now().UTC().Truncate(time.Second),
+		CreatedAt: testNow.UTC().Truncate(time.Second),
 		Sessions:  sessions,
 	}
 	projects.Projects[name] = entry
@@ -37,6 +38,11 @@ func addProject(t *testing.T, ws *workspace.Workspace, name string, sessions ...
 func activeSession(start time.Time) config.Session {
 	return config.Session{Start: start}
 }
+
+// testNow is the instant every session test runs at. Sessions are stamped
+// from the service's clock, so pinning it turns a tolerance window into an
+// exact instant.
+var testNow = time.Date(2026, 9, 14, 17, 0, 0, 0, time.UTC)
 
 func TestParseDuration(t *testing.T) {
 	tests := []struct {
@@ -133,6 +139,7 @@ func TestStartSessionNew(t *testing.T) {
 	addProject(t, ws, "my-blog")
 	fake := newFakeGit()
 	svc := NewService(fake)
+	svc.Clock = clock.NewFake(testNow)
 
 	session, started, err := svc.StartSession(ws, "my-blog")
 	if err != nil {
@@ -141,8 +148,10 @@ func TestStartSessionNew(t *testing.T) {
 	if !started {
 		t.Error("started = false, want true for new session")
 	}
-	if session.Start.IsZero() {
-		t.Error("Start is zero")
+	// Exact, not merely non-zero: Start comes from the clock, and the
+	// clock is the test's to set.
+	if !session.Start.Equal(testNow) {
+		t.Errorf("Start = %v, want %v", session.Start, testNow)
 	}
 	if session.End != nil {
 		t.Error("End = non-nil, want nil for active session")
@@ -230,6 +239,7 @@ func TestEndSessionEndsNow(t *testing.T) {
 	addProject(t, ws, "my-blog", activeSession(start))
 	fake := newFakeGit()
 	svc := NewService(fake)
+	svc.Clock = clock.NewFake(testNow)
 
 	session, err := svc.EndSession(ws, "my-blog", 0)
 	if err != nil {
@@ -241,14 +251,17 @@ func TestEndSessionEndsNow(t *testing.T) {
 	if session.End == nil {
 		t.Fatal("End = nil, want set")
 	}
-	if !session.End.After(session.Start) {
-		t.Errorf("End %v not after Start %v", session.End, session.Start)
+	// End is the fake clock's instant exactly, so Duration and Rounded are
+	// exact too. 2026-09-13 14:30 to 2026-09-14 17:00 is 95400s, which is
+	// 106 whole quarter-hours — so rounding changes nothing here.
+	if !session.End.Equal(testNow) {
+		t.Errorf("End = %v, want %v", session.End, testNow)
 	}
-	if session.Duration <= 0 {
-		t.Errorf("Duration = %d, want > 0", session.Duration)
+	if session.Duration != 95400 {
+		t.Errorf("Duration = %d, want 95400", session.Duration)
 	}
-	if session.Rounded < session.Duration {
-		t.Errorf("Rounded = %d < Duration = %d", session.Rounded, session.Duration)
+	if session.Rounded != 95400 {
+		t.Errorf("Rounded = %d, want 95400", session.Rounded)
 	}
 
 	// The ended session must be persisted.
@@ -297,10 +310,9 @@ func TestEndSessionBackfillNoActiveSession(t *testing.T) {
 	addProject(t, ws, "my-blog")
 	fake := newFakeGit()
 	svc := NewService(fake)
+	svc.Clock = clock.NewFake(testNow)
 
-	before := time.Now().UTC()
 	session, err := svc.EndSession(ws, "my-blog", 8)
-	after := time.Now().UTC()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,12 +329,16 @@ func TestEndSessionBackfillNoActiveSession(t *testing.T) {
 		t.Errorf("Rounded = %d, want 28800", session.Rounded)
 	}
 
-	// Start must be about 8h before End, and End must be about now.
+	// Both ends are exact: the backfill runs backwards from the clock, and
+	// the clock is the test's to set.
+	if !session.End.Equal(testNow) {
+		t.Errorf("End = %v, want %v", session.End, testNow)
+	}
+	if want := testNow.Add(-8 * time.Hour); !session.Start.Equal(want) {
+		t.Errorf("Start = %v, want %v", session.Start, want)
+	}
 	if got := session.End.Sub(session.Start); got != 8*time.Hour {
 		t.Errorf("End-Start = %v, want 8h", got)
-	}
-	if session.End.Before(before.Add(-2*time.Second)) || session.End.After(after.Add(2*time.Second)) {
-		t.Errorf("End = %v, want within [%v, %v]", session.End, before, after)
 	}
 }
 

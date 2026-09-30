@@ -3,6 +3,7 @@ package cli
 import (
 	"path/filepath"
 
+	"github.com/leebrandt/grind/internal/clock"
 	"github.com/leebrandt/grind/internal/editor"
 	"github.com/leebrandt/grind/internal/ideas"
 	"github.com/leebrandt/grind/internal/projects"
@@ -16,7 +17,7 @@ import (
 // `edit my-blog` resolves the project while `edit idea 3` still dispatches
 // to the subcommand. A project literally named "idea" is shadowed by the
 // subcommand — an acceptable edge case.
-func newEditCmd(ideasSvc *ideas.Service, projectsSvc *projects.Service) *cobra.Command {
+func newEditCmd(ideasSvc *ideas.Service, projectsSvc *projects.Service, clk clock.Clock) *cobra.Command {
 	edit := &cobra.Command{
 		Use:   "edit",
 		Short: "Edit something",
@@ -61,7 +62,7 @@ func newEditCmd(ideasSvc *ideas.Service, projectsSvc *projects.Service) *cobra.C
 			return editor.Open(filepath.Join(ws.IdeasDir(), idea.Filename))
 		},
 	})
-	edit.AddCommand(newEditJournalCmd())
+	edit.AddCommand(newEditJournalCmd(clk))
 
 	return edit
 }

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/leebrandt/grind/internal/clock"
 	"github.com/leebrandt/grind/internal/grinderr"
 	"github.com/leebrandt/grind/internal/workspace"
 )
@@ -28,12 +29,15 @@ func TodayFilename(now time.Time) string {
 // OpenToday ensures the journal directory exists and returns the path to
 // today's entry. The file itself is created by the editor on save — grind
 // does not pre-create it or write a template.
-func OpenToday(ws *workspace.Workspace) (string, error) {
+//
+// clk says what "today" is, so a test can open a journal entry for a day
+// that is not actually today.
+func OpenToday(ws *workspace.Workspace, clk clock.Clock) (string, error) {
 	dir := ws.JournalDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", grinderr.WrapSystem(err, "create journal directory %s", dir)
 	}
-	return filepath.Join(dir, TodayFilename(time.Now())), nil
+	return filepath.Join(dir, TodayFilename(clk.Now())), nil
 }
 
 // List returns journal entry filenames in chronological order (oldest

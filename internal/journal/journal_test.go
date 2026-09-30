@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/leebrandt/grind/internal/clock"
 	"github.com/leebrandt/grind/internal/workspace"
 )
 
@@ -44,11 +45,15 @@ func TestTodayFilename(t *testing.T) {
 func TestOpenToday(t *testing.T) {
 	ws := newTestWorkspace(t)
 
-	path, err := OpenToday(ws)
+	// A fixed instant, so the expected filename is a fact rather than
+	// something recomputed from the clock this test happens to run in.
+	clk := clock.NewFake(time.Date(2026, 9, 30, 14, 5, 0, 0, time.Local))
+
+	path, err := OpenToday(ws, clk)
 	if err != nil {
 		t.Fatalf("OpenToday: %v", err)
 	}
-	want := filepath.Join(ws.JournalDir(), TodayFilename(time.Now()))
+	want := filepath.Join(ws.JournalDir(), "2026-09-30.md")
 	if path != want {
 		t.Errorf("OpenToday path = %q, want %q", path, want)
 	}
@@ -59,12 +64,23 @@ func TestOpenToday(t *testing.T) {
 	}
 
 	// Calling it twice is safe (MkdirAll is idempotent).
-	path2, err := OpenToday(ws)
+	path2, err := OpenToday(ws, clk)
 	if err != nil {
 		t.Fatalf("OpenToday (second call): %v", err)
 	}
 	if path2 != path {
 		t.Errorf("second OpenToday = %q, want %q", path2, path)
+	}
+
+	// Advance a day and the filename follows, which is the whole reason
+	// OpenToday takes a clock instead of reading one.
+	clk.Advance(24 * time.Hour)
+	path3, err := OpenToday(ws, clk)
+	if err != nil {
+		t.Fatalf("OpenToday (next day): %v", err)
+	}
+	if want := filepath.Join(ws.JournalDir(), "2026-10-01.md"); path3 != want {
+		t.Errorf("next-day OpenToday = %q, want %q", path3, want)
 	}
 }
 

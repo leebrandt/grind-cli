@@ -114,11 +114,19 @@ func newTestWorkspace(t *testing.T, projects config.ProjectsConfig, cfg *config.
 // Every date in these tests is derived from the clock, never hardcoded: a
 // literal like "2026-09-20" silently drifts into the past (or the future)
 // as the calendar moves, which turns a green suite red with no code change
-// (this repo shipped that bug in commit 92e63ec). Noon pins the time of day
+// (this repo shipped that bug in commit 92e63ec).
+//
+// invoiceNow is the instant every test in this file runs at. It is a fixed
+// date rather than time.Now(), so a session can never slide across a local
+// midnight and land on the wrong day in the breakdown, and so the invoice's
+// own date is a fact instead of a moving target.
+var invoiceNow = time.Date(2026, 9, 30, 14, 30, 0, 0, time.Local)
+
+// Noon pins the time of day
 // so a session can never slide across a local midnight and land on the
 // wrong day in the breakdown.
 func localDay(offsetDays int) time.Time {
-	t := time.Now().AddDate(0, 0, offsetDays)
+	t := invoiceNow.AddDate(0, 0, offsetDays)
 	return time.Date(t.Year(), t.Month(), t.Day(), 12, 0, 0, 0, time.Local)
 }
 
@@ -407,7 +415,7 @@ func TestGenerateHappyPath(t *testing.T) {
 	ws := newTestWorkspace(t, projects, workspaceCfg())
 	fake := &fakeGit{}
 	svc := NewService(fake)
-	now := time.Now()
+	now := invoiceNow
 
 	inv, err := svc.Generate(ws, "my-blog", false, now)
 	if err != nil {
@@ -526,7 +534,7 @@ func TestGenerateBillsRoundedNotDuration(t *testing.T) {
 	ws := newTestWorkspace(t, projects, workspaceCfg())
 	svc := NewService(&fakeGit{})
 
-	inv, err := svc.Generate(ws, "my-blog", false, time.Now())
+	inv, err := svc.Generate(ws, "my-blog", false, invoiceNow)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -563,7 +571,7 @@ func TestGenerateNoBillableSessions(t *testing.T) {
 	fake := &fakeGit{}
 	svc := NewService(fake)
 
-	inv, err := svc.Generate(ws, "my-blog", false, time.Now())
+	inv, err := svc.Generate(ws, "my-blog", false, invoiceNow)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -595,7 +603,7 @@ func TestGenerateDryRun(t *testing.T) {
 	fake := &fakeGit{}
 	svc := NewService(fake)
 
-	inv, err := svc.Generate(ws, "my-blog", true, time.Now())
+	inv, err := svc.Generate(ws, "my-blog", true, invoiceNow)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -637,7 +645,7 @@ func TestGenerateIgnoresProjectStatus(t *testing.T) {
 			ws := newTestWorkspace(t, projects, workspaceCfg())
 			svc := NewService(&fakeGit{})
 
-			inv, err := svc.Generate(ws, "my-blog", false, time.Now())
+			inv, err := svc.Generate(ws, "my-blog", false, invoiceNow)
 			if err != nil {
 				t.Fatalf("Generate: %v", err)
 			}
@@ -660,7 +668,7 @@ func TestGenerateDefaultPaymentTerms(t *testing.T) {
 	}
 	ws := newTestWorkspace(t, projects, nil)
 	svc := NewService(&fakeGit{})
-	now := time.Now()
+	now := invoiceNow
 
 	inv, err := svc.Generate(ws, "my-blog", true, now)
 	if err != nil {
@@ -683,7 +691,7 @@ func TestGenerateUnknownProject(t *testing.T) {
 	ws := newTestWorkspace(t, config.DefaultProjects(), workspaceCfg())
 	svc := NewService(&fakeGit{})
 
-	_, err := svc.Generate(ws, "nope", false, time.Now())
+	_, err := svc.Generate(ws, "nope", false, invoiceNow)
 	if err == nil {
 		t.Fatal("expected error for unknown project")
 	}
@@ -711,7 +719,7 @@ func TestGenerateUnknownProjectNoProjectsFile(t *testing.T) {
 	}
 	svc := NewService(&fakeGit{})
 
-	_, err := svc.Generate(ws, "nope", false, time.Now())
+	_, err := svc.Generate(ws, "nope", false, invoiceNow)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -854,7 +862,7 @@ func TestGenerateWithRealGit(t *testing.T) {
 		t.Fatalf("Commit: %v", err)
 	}
 
-	inv, err := NewService(g).Generate(ws, "my-blog", false, time.Now())
+	inv, err := NewService(g).Generate(ws, "my-blog", false, invoiceNow)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}

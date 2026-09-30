@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/leebrandt/grind/internal/clock"
 	"github.com/leebrandt/grind/internal/grinderr"
 	"github.com/leebrandt/grind/internal/workspace"
 )
@@ -297,17 +298,25 @@ func TestResolve(t *testing.T) {
 	})
 }
 
+// ideaNow is the instant the idea tests create ideas at. An idea's
+// filename IS its creation time, so without a fixed clock these tests
+// could only assert that a filename came back at all.
+var ideaNow = time.Date(2026, 1, 1, 9, 30, 0, 0, time.Local)
+
 func TestCreateWithTitleCommitsOnlyIdeaFile(t *testing.T) {
 	ws := newTestWorkspace(t)
 	fake := &fakeGit{}
 	svc := NewService(fake)
+	svc.Clock = clock.NewFake(ideaNow)
 
 	filename, err := svc.Create(ws, "My idea")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if filename == "" {
-		t.Fatal("expected a filename")
+	// The filename is the timestamp in local time, so it is now an exact
+	// fact rather than "some name that came back".
+	if want := "20260101093000.md"; filename != want {
+		t.Errorf("filename = %q, want %q", filename, want)
 	}
 
 	data, err := os.ReadFile(filepath.Join(ws.IdeasDir(), filename))

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/leebrandt/grind/internal/clock"
 	"github.com/leebrandt/grind/internal/editor"
 	"github.com/leebrandt/grind/internal/journal"
 	"github.com/leebrandt/grind/internal/workspace"
@@ -13,40 +14,42 @@ import (
 // newEditJournalCmd builds `grind edit journal`. Editing is the ONE
 // exception to the "main worktree is clean" invariant: the user is mid-edit
 // and the entry stays untracked until the next `grind save`.
-func newEditJournalCmd() *cobra.Command {
+func newEditJournalCmd(clk clock.Clock) *cobra.Command {
 	return &cobra.Command{
 		Use:   "journal",
 		Short: "Edit today's journal entry in your editor",
 		Args:  cobra.NoArgs,
-		RunE:  editJournalRunE,
+		RunE:  editJournalRunE(clk),
 	}
 }
 
 // newJournalAliasCmd builds the hidden `grind journal` shortcut for
 // `grind edit journal`. The user asked for this explicitly — v1's `grind
 // journal` muscle memory — so it must stay hidden from --help.
-func newJournalAliasCmd() *cobra.Command {
+func newJournalAliasCmd(clk clock.Clock) *cobra.Command {
 	return &cobra.Command{
 		Use:    "journal",
 		Short:  "Edit today's journal entry (alias for 'edit journal')",
 		Hidden: true,
 		Args:   cobra.NoArgs,
-		RunE:   editJournalRunE,
+		RunE:   editJournalRunE(clk),
 	}
 }
 
 // editJournalRunE is the shared body of `edit journal` and the hidden
 // `journal` alias.
-func editJournalRunE(cmd *cobra.Command, args []string) error {
-	ws, err := workspace.Require(".")
-	if err != nil {
-		return err
+func editJournalRunE(clk clock.Clock) func(cmd *cobra.Command, args []string) error {
+	return func(cmd *cobra.Command, args []string) error {
+		ws, err := workspace.Require(".")
+		if err != nil {
+			return err
+		}
+		path, err := journal.OpenToday(ws, clk)
+		if err != nil {
+			return err
+		}
+		return editor.Open(path)
 	}
-	path, err := journal.OpenToday(ws)
-	if err != nil {
-		return err
-	}
-	return editor.Open(path)
 }
 
 // newReadCmd builds the `read` command group. This slice only has

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/leebrandt/grind/internal/clock"
 	"github.com/leebrandt/grind/internal/config"
 	"github.com/leebrandt/grind/internal/git"
 	"github.com/leebrandt/grind/internal/workspace"
@@ -143,8 +144,14 @@ func TestTaskUrgency(t *testing.T) {
 	}
 }
 
+// statusNow is the instant every status test runs at. Status decides
+// urgency and "time ago" buckets from the clock, so pinning it means the
+// fixtures below are facts about a known date rather than statements about
+// whenever the suite happened to run.
+var statusNow = time.Date(2026, 9, 30, 15, 0, 0, 0, time.Local)
+
 func TestStatus(t *testing.T) {
-	now := time.Now()
+	now := statusNow
 	// Due dates are derived from the clock, not hardcoded: a literal date
 	// silently becomes "overdue" the day after it passes, which turns a
 	// green test into a red one with no code change. Thirty days out is
@@ -184,6 +191,7 @@ func TestStatus(t *testing.T) {
 		"alpha": now.Add(-2 * time.Hour),
 		// beta and gamma have no entry: no commits yet.
 	}})
+	svc.Clock = clock.NewFake(statusNow)
 
 	rows, err := svc.Status(ws)
 	if err != nil {
@@ -243,7 +251,7 @@ func TestStatus(t *testing.T) {
 }
 
 func TestStatusActiveSession(t *testing.T) {
-	now := time.Now()
+	now := statusNow
 	end := now.Add(-2 * time.Hour)
 	projects := config.ProjectsConfig{
 		Version: 1,
@@ -262,6 +270,7 @@ func TestStatusActiveSession(t *testing.T) {
 	}
 	ws := newTestWorkspace(t, projects)
 	svc := NewService(&fakeGit{})
+	svc.Clock = clock.NewFake(statusNow)
 
 	rows, err := svc.Status(ws)
 	if err != nil {
@@ -291,6 +300,7 @@ func TestStatusActiveSession(t *testing.T) {
 func TestStatusNoProjects(t *testing.T) {
 	ws := newTestWorkspace(t, config.DefaultProjects())
 	svc := NewService(&fakeGit{})
+	svc.Clock = clock.NewFake(statusNow)
 
 	rows, err := svc.Status(ws)
 	if err != nil {
@@ -312,6 +322,7 @@ func TestStatusMissingProjectsFile(t *testing.T) {
 		MainWorktree: filepath.Join(dir, ".main"),
 	}
 	svc := NewService(&fakeGit{})
+	svc.Clock = clock.NewFake(statusNow)
 
 	_, err := svc.Status(ws)
 	if err == nil {
@@ -333,6 +344,7 @@ func TestStatusSkipsCanceled(t *testing.T) {
 	}
 	ws := newTestWorkspace(t, projects)
 	svc := NewService(&fakeGit{})
+	svc.Clock = clock.NewFake(statusNow)
 
 	rows, err := svc.Status(ws)
 	if err != nil {
@@ -351,7 +363,7 @@ func TestStatusHasUnbilled(t *testing.T) {
 	// It follows the same rule the invoice bills: an ended session that has
 	// not been invoiced. An active session is not unbilled work — it has no
 	// Rounded seconds yet and nothing to bill for.
-	now := time.Now()
+	now := statusNow
 	end := now.Add(-time.Hour)
 	invoicedEnd := now.Add(-2 * time.Hour)
 
@@ -400,6 +412,7 @@ func TestStatusHasUnbilled(t *testing.T) {
 			}
 			ws := newTestWorkspace(t, projects)
 			svc := NewService(&fakeGit{})
+			svc.Clock = clock.NewFake(statusNow)
 
 			rows, err := svc.Status(ws)
 			if err != nil {
@@ -415,7 +428,7 @@ func TestStatusHasUnbilled(t *testing.T) {
 func TestStatusSkipsCanceledTasks(t *testing.T) {
 	// A canceled task must not count as open work and must not drive
 	// urgency — it died with its project.
-	now := time.Now()
+	now := statusNow
 	// Both dates are relative to the clock: the open task must stay out of
 	// the urgency windows, and the canceled one must be genuinely past due
 	// so the test proves cancellation is what suppresses it, not a date that
@@ -437,6 +450,7 @@ func TestStatusSkipsCanceledTasks(t *testing.T) {
 	}
 	ws := newTestWorkspace(t, projects)
 	svc := NewService(&fakeGit{})
+	svc.Clock = clock.NewFake(statusNow)
 
 	rows, err := svc.Status(ws)
 	if err != nil {

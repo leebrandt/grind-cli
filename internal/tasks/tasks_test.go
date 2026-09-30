@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/leebrandt/grind/internal/clock"
 	"github.com/leebrandt/grind/internal/config"
 	"github.com/leebrandt/grind/internal/git"
 	"github.com/leebrandt/grind/internal/grinderr"
@@ -108,7 +109,7 @@ func addProject(t *testing.T, ws *workspace.Workspace, name string, tasks ...con
 		Type:      "blog",
 		Idea:      "# Test\n",
 		Billing:   config.BillingEntry{RoundTo: "quarter-hour", Rate: 150},
-		CreatedAt: time.Now().UTC().Truncate(time.Second),
+		CreatedAt: testNow.UTC().Truncate(time.Second),
 		Tasks:     tasks,
 	}
 	projects.Projects[name] = entry
@@ -134,11 +135,17 @@ func task(id int, description, dueDate string, done bool) config.Task {
 	return t
 }
 
+// testNow is the instant every test in this file runs at. AddTask and
+// Complete stamp records from the service's clock, so pinning it turns
+// "the timestamp is roughly now" into "the timestamp is exactly this".
+var testNow = time.Date(2026, 9, 14, 10, 0, 0, 0, time.UTC)
+
 func TestAddTaskAssignsIDs(t *testing.T) {
 	ws := newTestWorkspace(t)
 	addProject(t, ws, "my-blog")
 	fake := &fakeGit{}
 	svc := NewService(fake)
+	svc.Clock = clock.NewFake(testNow)
 
 	first, err := svc.AddTask(ws, "my-blog", "Write intro", "2026-09-20")
 	if err != nil {
@@ -156,8 +163,8 @@ func TestAddTaskAssignsIDs(t *testing.T) {
 	if first.Done {
 		t.Error("new task must not be done")
 	}
-	if first.CreatedAt.IsZero() {
-		t.Error("CreatedAt is zero")
+	if !first.CreatedAt.Equal(testNow) {
+		t.Errorf("CreatedAt = %v, want %v", first.CreatedAt, testNow)
 	}
 
 	second, err := svc.AddTask(ws, "my-blog", "Write outro", "")
@@ -216,7 +223,7 @@ func TestAddTaskMissingCounterStartsAt100(t *testing.T) {
 		Type:      "blog",
 		Idea:      "# Test\n",
 		Billing:   config.BillingEntry{RoundTo: "quarter-hour", Rate: 150},
-		CreatedAt: time.Now().UTC().Truncate(time.Second),
+		CreatedAt: testNow.UTC().Truncate(time.Second),
 	}
 	if err := config.WriteProjects(ws.ProjectsConfigPath(), projects); err != nil {
 		t.Fatal(err)
@@ -464,10 +471,9 @@ func TestCompleteSetsDoneAndCommits(t *testing.T) {
 	)
 	fake := &fakeGit{}
 	svc := NewService(fake)
+	svc.Clock = clock.NewFake(testNow)
 
-	before := time.Now().UTC()
 	task, alreadyDone, err := svc.Complete(ws, 100)
-	after := time.Now().UTC()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -480,8 +486,9 @@ func TestCompleteSetsDoneAndCommits(t *testing.T) {
 	if task.CompletedAt == nil {
 		t.Fatal("CompletedAt = nil, want set")
 	}
-	if task.CompletedAt.Before(before.Add(-time.Second)) || task.CompletedAt.After(after.Add(time.Second)) {
-		t.Errorf("CompletedAt = %v, want around now", task.CompletedAt)
+	// Exact, not "about now": the clock is the test's to set.
+	if !task.CompletedAt.Equal(testNow) {
+		t.Errorf("CompletedAt = %v, want %v", task.CompletedAt, testNow)
 	}
 
 	// The task must be persisted as done.

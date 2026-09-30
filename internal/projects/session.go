@@ -129,7 +129,7 @@ func (s *Service) StartSession(ws *workspace.Workspace, name string) (*config.Se
 		}
 	}
 
-	now := time.Now().UTC().Truncate(time.Second)
+	now := s.Clock.Now().UTC().Truncate(time.Second)
 	session := config.Session{Start: now}
 	entry.Sessions = append(entry.Sessions, session)
 	projects.Projects[name] = entry
@@ -153,7 +153,7 @@ func (s *Service) EndSession(ws *workspace.Workspace, name string, backfill floa
 		return nil, err
 	}
 
-	now := time.Now().UTC().Truncate(time.Second)
+	now := s.Clock.Now().UTC().Truncate(time.Second)
 
 	// Find the active session, if any.
 	activeIdx := -1

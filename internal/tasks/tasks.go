@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/leebrandt/grind/internal/clock"
 	"github.com/leebrandt/grind/internal/config"
 	"github.com/leebrandt/grind/internal/git"
 	"github.com/leebrandt/grind/internal/grinderr"
@@ -25,11 +26,26 @@ import (
 // and verify exactly which operations run and in what order.
 type Service struct {
 	Git git.Git
+
+	// Clock is what this service stamps records with. Tests replace it
+	// with a clock.Fake to control the time.
+	Clock clock.Clock
 }
 
 // NewService returns a Service backed by g.
+// Today is the LOCAL date, as YYYY-MM-DD. It is the one question the CLI
+// keeps asking about this service, so it lives here rather than being
+// re-derived from a formatted Clock.Now() at each call site.
+func (s *Service) Today() string {
+	return s.Clock.Now().Format("2006-01-02")
+}
+
+// NewService returns a Service backed by g, reading the wall clock.
+// Tests that care about time overwrite the Clock field with a
+// clock.Fake; because nothing builds a Service without this
+// constructor, a nil Clock is not reachable.
 func NewService(g git.Git) *Service {
-	return &Service{Git: g}
+	return &Service{Git: g, Clock: clock.Real{}}
 }
 
 // AddTask appends a task to the project's task list, assigning the next
@@ -70,7 +86,7 @@ func (s *Service) AddTask(ws *workspace.Workspace, projectName, description, due
 		Description: description,
 		// Truncate to seconds so the stored timestamp matches the RFC3339
 		// shape in the spec (no fractional seconds).
-		CreatedAt: time.Now().UTC().Truncate(time.Second),
+		CreatedAt: s.Clock.Now().UTC().Truncate(time.Second),
 		DueDate:   dueDate,
 	}
 	entry.Tasks = append(entry.Tasks, *task)
@@ -203,7 +219,7 @@ func (s *Service) Complete(ws *workspace.Workspace, id int) (*config.Task, bool,
 				return nil, false, grinderr.NewUser(fmt.Sprintf("Task #%d is canceled.", id))
 			}
 
-			now := time.Now().UTC().Truncate(time.Second)
+			now := s.Clock.Now().UTC().Truncate(time.Second)
 			entry.Tasks[i].Done = true
 			entry.Tasks[i].CompletedAt = &now
 			projects.Projects[name] = entry
