@@ -234,11 +234,32 @@ and what's next.
 ## Build & test
 
 ```bash
+gofmt -l .           # must print nothing — run this first, always
 go build ./...        # build
 go test ./...         # run tests
 go vet ./...          # static checks
 go build -o grind ./cmd/grind   # build the binary
 ```
+
+`gofmt -l .` is the first line for a reason. Nine slices of drift piled up
+unformatted before anyone noticed, because nothing ran it — and `go build`
+and `go test` both pass on unformatted code, so only the explicit check
+catches it. A file counts as formatted only if `gofmt -l` is silent about
+it, and silence has to be checked *before* the commit, not after.
+
+Two more checks worth running before calling a slice done, because both
+catch classes of bug that a green `go test` hides:
+
+```bash
+go test -race ./...   # concurrency; the git and push/pull paths
+TZ=Pacific/Niue go test ./...   # day-boundary and timezone assumptions
+```
+
+A test that reads `time.Now()` and compares it against a hardcoded date
+passes today and fails next month. That is how the status tests rotted
+once already. When a test needs "now", derive the expectation from the
+clock too (`TodayFilename(time.Now())`), or inject the instant as a
+parameter — never mix a literal date into a clock-derived comparison.
 
 ## Dev-agent workflow
 
