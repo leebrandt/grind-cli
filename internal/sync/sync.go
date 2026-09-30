@@ -20,9 +20,9 @@ import (
 type Scope int
 
 const (
-	ScopeMain Scope = iota // grind push — the default branch
-	ScopeProject           // grind push <project>
-	ScopeAll               // grind push all
+	ScopeMain    Scope = iota // grind push — the default branch
+	ScopeProject              // grind push <project>
+	ScopeAll                  // grind push all
 )
 
 // Service performs push and pull against a workspace using the given git

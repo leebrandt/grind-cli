@@ -507,8 +507,8 @@ func TestPullCreatesMissingWorktree(t *testing.T) {
 	fake := &fakeGit{
 		remoteBranches: []string{"main", "leenix"},
 		isAncestor: map[string]bool{
-			"main|origin/main":       true,
-			"origin/main|main":       true, // main is up to date
+			"main|origin/main": true,
+			"origin/main|main": true, // main is up to date
 		},
 	}
 	svc := NewService(fake)

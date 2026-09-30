@@ -26,7 +26,7 @@ type fakeCommit struct {
 	paths    []string
 }
 
-func (f *fakeGit) InitBare(path string) error                 { return nil }
+func (f *fakeGit) InitBare(path string) error                  { return nil }
 func (f *fakeGit) InitialCommit(repoPath, branch string) error { return nil }
 func (f *fakeGit) AddWorktree(repoPath, worktreePath, branch string) error {
 	return nil
@@ -38,7 +38,7 @@ func (f *fakeGit) Commit(worktreePath, message string, paths ...string) error {
 func (f *fakeGit) IsPathClean(worktreePath, path string) (bool, error) { return true, nil }
 func (f *fakeGit) CreateBranch(repoPath, branch string) error          { return nil }
 func (f *fakeGit) HasChanges(worktreePath string) (bool, error)        { return false, nil }
-func (f *fakeGit) CommitAll(worktreePath, message string) error         { return nil }
+func (f *fakeGit) CommitAll(worktreePath, message string) error        { return nil }
 func (f *fakeGit) RemoteURL(repoPath string) (string, error)           { return "", nil }
 func (f *fakeGit) PushAll(repoPath string) error                       { return nil }
 

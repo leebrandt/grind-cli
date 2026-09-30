@@ -144,10 +144,10 @@ type ClientInfo struct {
 // imports workspace, which imports config — a tasks-owned type would
 // create an import cycle.
 type Task struct {
-	ID          int        `json:"id"`
-	Description string     `json:"description"`
-	Done        bool       `json:"done"`
-	CreatedAt   time.Time  `json:"createdAt"`
+	ID          int       `json:"id"`
+	Description string    `json:"description"`
+	Done        bool      `json:"done"`
+	CreatedAt   time.Time `json:"createdAt"`
 	// CompletedAt is set when the task flips to done; it stays nil while
 	// the task is open.
 	CompletedAt *time.Time `json:"completedAt,omitempty"`

@@ -559,12 +559,12 @@ func TestProjectList(t *testing.T) {
 	paths, fake := newTestPaths(t)
 	projects := projectWith("my-blog")
 	projects.Projects["my-blog"] = ProjectEntry{
-		Name:    "my-blog",
-		Type:    "blog",
-		Billing: BillingEntry{RoundTo: "half-hour", Rate: 250},
-		Client:  &ClientInfo{Contact: "Jane", Email: "jane@example.com"},
-		Repo:    "git@example.com:repo.git",
-		Code:    "BLOG-1",
+		Name:     "my-blog",
+		Type:     "blog",
+		Billing:  BillingEntry{RoundTo: "half-hour", Rate: 250},
+		Client:   &ClientInfo{Contact: "Jane", Email: "jane@example.com"},
+		Repo:     "git@example.com:repo.git",
+		Code:     "BLOG-1",
 		Deadline: "2026-12-31",
 	}
 	writeProjects(t, paths, projects)
