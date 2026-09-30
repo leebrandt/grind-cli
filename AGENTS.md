@@ -84,6 +84,32 @@ turns out wrong, raise it in conversation first.
 3. The git layer is behind an **interface** so tests can fake it.
 4. `Commit` refuses to commit when there are unmerged paths
    (`git ls-files -u` non-empty) — protects the config-on-main design.
+5. Slice work lands on `develop` and ships to `main` from there. See
+   "Branches" below — and note `main` the branch is a completely different
+   thing from `.main/` the directory.
+
+### Branches
+
+There are two long-lived branches, and confusing them is expensive:
+
+| branch | role | moves when |
+|---|---|---|
+| `develop` | integration — the trunk every slice merges into | continuously, as slices land |
+| `main` | production — what a fresh clone should get | when the user calls a release |
+
+- Feature and slice branches are cut from `develop`, never from `main`.
+  Production only ever moves forward, and only by a deliberate fast-forward
+  from `develop` — never by merging a feature branch into it.
+- The remote's default branch is `main`, so a fresh `git clone` gives you
+  production code. That setting is server-side state on GitHub and is not
+  something `git` can change from a clone.
+- **The `main` branch has nothing to do with the `.main/` directory.**
+  `.main/` is the hidden main *worktree* — the directory holding
+  `.grind.json`, `.projects.json`, `ideas/`, `journal/` and the rest of the
+  workspace state. It exists on every branch, including `develop`, and its
+  name is unrelated to the `main` branch. Grind's own vocabulary calls that
+  worktree "the main worktree" for the same reason it is confusing; in git
+  terms, `.main/` is just a worktree checked out at some path.
 
 ### Sessions (time tracking)
 
