@@ -145,6 +145,11 @@ func TestTaskUrgency(t *testing.T) {
 
 func TestStatus(t *testing.T) {
 	now := time.Now()
+	// Due dates are derived from the clock, not hardcoded: a literal date
+	// silently becomes "overdue" the day after it passes, which turns a
+	// green test into a red one with no code change. Thirty days out is
+	// comfortably beyond the "soon" window (3 days), so the task is "none".
+	future := now.AddDate(0, 0, 30).Format("2006-01-02")
 	// endedAt pins a session's End pointer; sessions below are built with
 	// fixed offsets from now so the TimeAgo buckets are stable.
 	endedAt := func(d time.Duration) *time.Time {
@@ -168,7 +173,7 @@ func TestStatus(t *testing.T) {
 					{Start: now.Add(-2 * time.Hour), End: endedAt(time.Hour), Rounded: 3600},
 				},
 				Tasks: []config.Task{
-					{ID: 100, Description: "open task", DueDate: "2026-09-20"},
+					{ID: 100, Description: "open task", DueDate: future},
 					{ID: 101, Description: "done task", Done: true},
 				},
 			},
@@ -344,14 +349,21 @@ func TestStatusSkipsCanceled(t *testing.T) {
 func TestStatusSkipsCanceledTasks(t *testing.T) {
 	// A canceled task must not count as open work and must not drive
 	// urgency — it died with its project.
+	now := time.Now()
+	// Both dates are relative to the clock: the open task must stay out of
+	// the urgency windows, and the canceled one must be genuinely past due
+	// so the test proves cancellation is what suppresses it, not a date that
+	// happens to be harmless.
+	future := now.AddDate(0, 0, 30).Format("2006-01-02")
+	past := now.AddDate(0, 0, -30).Format("2006-01-02")
 	projects := config.ProjectsConfig{
 		Version: 1,
 		Projects: map[string]config.ProjectEntry{
 			"alpha": {
 				Name: "alpha",
 				Tasks: []config.Task{
-					{ID: 100, Description: "open", DueDate: "2026-09-20"},
-					{ID: 101, Description: "canceled", DueDate: "2026-09-01", Canceled: true},
+					{ID: 100, Description: "open", DueDate: future},
+					{ID: 101, Description: "canceled", DueDate: past, Canceled: true},
 					{ID: 102, Description: "done", Done: true},
 				},
 			},
