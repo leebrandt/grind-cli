@@ -364,10 +364,11 @@ func locateProjectConfig(root, fromMain, name string) (chosen projectSource, sha
 	return project, nil
 }
 
-// warnShadowed reports a main-side copy the migration drops because the
-// project-level copy was used instead. Identical files lose nothing and are not
-// reported. Different files may hold sessions the kept copy does not, so the
-// dropped copy's counts are printed for the user to check by hand.
+// warnShadowed reports a main-side copy the migration discards because the
+// project-level copy was used instead. The project itself is migrated either
+// way; only the older config file is set aside. Identical files lose nothing
+// and are not reported. Different files are reported with the counts of both,
+// so the user can see what the discarded copy held that the kept one does not.
 func (p *Plan) warnShadowed(name, fromMain string, kept projectSource, dropped projectSource) error {
 	same, err := sameFile(kept.path, dropped.path)
 	if err != nil {
@@ -376,13 +377,18 @@ func (p *Plan) warnShadowed(name, fromMain string, kept projectSource, dropped p
 	if same {
 		return nil
 	}
-	old, err := readV1Project(dropped)
+	keptV1, err := readV1Project(kept)
 	if err != nil {
 		return err
 	}
-	p.warnf(name, "dropped %s (%s, %s); kept %s",
+	discarded, err := readV1Project(dropped)
+	if err != nil {
+		return err
+	}
+	p.warnf(name, "migrated from %s (%s, %s); discarded the older %s (%s, %s)",
+		kept.rel, countOf(len(keptV1.Time), "session"), countOf(len(keptV1.Tasks), "task"),
 		filepath.Join(filepath.Base(fromMain), dropped.rel),
-		countOf(len(old.Time), "session"), countOf(len(old.Tasks), "task"), kept.rel)
+		countOf(len(discarded.Time), "session"), countOf(len(discarded.Tasks), "task"))
 	return nil
 }
 

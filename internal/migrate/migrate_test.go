@@ -1135,7 +1135,7 @@ func TestPlanPrefersTheProjectLevelCopy(t *testing.T) {
 		t.Errorf("sessions = %v, want none: the main copy's session is dropped", alpha.Sessions)
 	}
 
-	want := "alpha: dropped grind/projects/alpha/.project.json (1 session, 0 tasks); kept alpha/projects/alpha/.project.json"
+	want := "alpha: migrated from alpha/projects/alpha/.project.json (0 sessions, 0 tasks); discarded the older grind/projects/alpha/.project.json (1 session, 0 tasks)"
 	if !containsString(plan.Warnings, want) {
 		t.Errorf("warnings = %v, want %q", plan.Warnings, want)
 	}
@@ -1153,8 +1153,8 @@ func TestPlanIdenticalCopiesWarnNothing(t *testing.T) {
 		t.Fatalf("NewPlan() error = %v", err)
 	}
 	for _, warning := range plan.Warnings {
-		if strings.Contains(warning, "dropped") {
-			t.Errorf("warnings = %v, want no dropped-copy warning for identical files", plan.Warnings)
+		if strings.Contains(warning, "discarded") {
+			t.Errorf("warnings = %v, want no discarded-copy warning for identical files", plan.Warnings)
 		}
 	}
 }
