@@ -233,17 +233,23 @@ func dueColor(dueDate, today string) string {
 	}
 }
 
-// newDoneCmd builds the `done` command group. This slice only has
-// `done task`; bare `grind done` shows help.
-func newDoneCmd(svc *tasks.Service) *cobra.Command {
-	done := &cobra.Command{
-		Use:   "done",
-		Short: "Complete something",
+// newFinishCmd builds the `finish` command group. This slice only has
+// `finish task`; bare `grind finish` shows help.
+//
+// The verb is `finish` rather than `done` because the command pattern is
+// `<verb> <thing>`, and "done" is an adjective — it reads as a state the user
+// is asking about, not an action they are taking. `finish task 100` says what
+// happens to the task. The stored field stays `done`/`completedAt`, which is
+// the state's own vocabulary, not the verb's.
+func newFinishCmd(svc *tasks.Service) *cobra.Command {
+	finish := &cobra.Command{
+		Use:   "finish",
+		Short: "Finish something",
 	}
 
-	done.AddCommand(&cobra.Command{
+	finish.AddCommand(&cobra.Command{
 		Use:   "task <id>",
-		Short: "Complete a task",
+		Short: "Finish a task",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ws, err := workspace.Require(".")
@@ -269,7 +275,7 @@ func newDoneCmd(svc *tasks.Service) *cobra.Command {
 		},
 	})
 
-	return done
+	return finish
 }
 
 // parseTaskID converts the CLI argument to a global task ID.

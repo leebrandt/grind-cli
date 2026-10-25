@@ -202,7 +202,7 @@ verb set, each verb means exactly one thing:
 | `invoice` | bill billable work | `invoice my-blog`, `invoice my-blog -n` |
 | `migrate` | convert a v1 workspace | `grind migrate`, `grind migrate -n` |
 | `read` | print to stdout | `read journal` |
-| `done` | complete a task | `done task 3` |
+| `finish` | complete a task | `finish task 3` |
 | `config` | get/set/list config | `grind config`, `grind config billing.defaultRate 200`, `grind config my-blog billing.rate 250` |
 
 Rules:
