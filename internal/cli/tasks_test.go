@@ -152,7 +152,7 @@ func TestListTasksAllFlagIncludesCompleted(t *testing.T) {
 	if _, err := execute(t, fake, "new", "task", "my-blog", "Write intro"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := execute(t, fake, "done", "task", "100"); err != nil {
+	if _, err := execute(t, fake, "finish", "task", "100"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -257,7 +257,7 @@ func TestTasksAliasCommand(t *testing.T) {
 	}
 }
 
-func TestDoneTaskCommand(t *testing.T) {
+func TestFinishTaskCommand(t *testing.T) {
 	fake, cleanup := runInWorkspace(t)
 	defer cleanup()
 	createProject(t, fake, "my-blog")
@@ -266,9 +266,9 @@ func TestDoneTaskCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, err := execute(t, fake, "done", "task", "100")
+	out, err := execute(t, fake, "finish", "task", "100")
 	if err != nil {
-		t.Fatalf("done task: %v", err)
+		t.Fatalf("finish task: %v", err)
 	}
 	if !strings.Contains(out, "Task 100 completed.") {
 		t.Errorf("output = %q", out)
@@ -283,7 +283,7 @@ func TestDoneTaskCommand(t *testing.T) {
 	}
 }
 
-func TestDoneTaskAlreadyDone(t *testing.T) {
+func TestFinishTaskAlreadyDone(t *testing.T) {
 	fake, cleanup := runInWorkspace(t)
 	defer cleanup()
 	createProject(t, fake, "my-blog")
@@ -291,12 +291,12 @@ func TestDoneTaskAlreadyDone(t *testing.T) {
 	if _, err := execute(t, fake, "new", "task", "my-blog", "Write intro"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := execute(t, fake, "done", "task", "100"); err != nil {
+	if _, err := execute(t, fake, "finish", "task", "100"); err != nil {
 		t.Fatal(err)
 	}
 	commitsBefore := len(fake.commits)
 
-	out, err := execute(t, fake, "done", "task", "100")
+	out, err := execute(t, fake, "finish", "task", "100")
 	if err != nil {
 		t.Fatalf("done task (second): %v", err)
 	}
@@ -309,11 +309,11 @@ func TestDoneTaskAlreadyDone(t *testing.T) {
 	}
 }
 
-func TestDoneTaskNonNumeric(t *testing.T) {
+func TestFinishTaskNonNumeric(t *testing.T) {
 	fake, cleanup := runInWorkspace(t)
 	defer cleanup()
 
-	_, err := execute(t, fake, "done", "task", "abc")
+	_, err := execute(t, fake, "finish", "task", "abc")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -322,11 +322,11 @@ func TestDoneTaskNonNumeric(t *testing.T) {
 	}
 }
 
-func TestDoneTaskNotFound(t *testing.T) {
+func TestFinishTaskNotFound(t *testing.T) {
 	fake, cleanup := runInWorkspace(t)
 	defer cleanup()
 
-	_, err := execute(t, fake, "done", "task", "999")
+	_, err := execute(t, fake, "finish", "task", "999")
 	if err == nil {
 		t.Fatal("expected error")
 	}

@@ -201,7 +201,7 @@ verb set, each verb means exactly one thing:
 | `publish` / `cancel` | project lifecycle | `publish my-blog`, `cancel my-blog` |
 | `invoice` | bill billable work | `invoice my-blog`, `invoice my-blog -n` |
 | `read` | print to stdout | `read journal` |
-| `done` | complete a task | `done task 3` |
+| `finish` | complete a task | `finish task 3` |
 | `config` | get/set/list config | `grind config`, `grind config billing.defaultRate 200`, `grind config my-blog billing.rate 250` |
 
 Rules:

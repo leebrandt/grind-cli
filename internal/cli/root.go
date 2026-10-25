@@ -84,7 +84,7 @@ func NewRootCmdWithClock(g git.Git, clk clock.Clock) *cobra.Command {
 	root.AddCommand(newSaveCmd(projectsSvc, g))
 	root.AddCommand(newPushCmd(syncSvc))
 	root.AddCommand(newPullCmd(syncSvc))
-	root.AddCommand(newDoneCmd(tasksSvc))
+	root.AddCommand(newFinishCmd(tasksSvc))
 	root.AddCommand(newJournalAliasCmd(clk))
 	root.AddCommand(newReadCmd())
 	root.AddCommand(newWwdCmd(statusSvc, tasksSvc))
