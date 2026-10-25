@@ -1104,6 +1104,91 @@ func TestApplyWritesStateBeforeItMovesAnything(t *testing.T) {
 	}
 }
 
+// writeWorktreeConfig writes a project's own copy of its config, at the path v1
+// used for it: <root>/<name>/projects/<name>/.project.json.
+func writeWorktreeConfig(t *testing.T, root, name, projectJSON string) {
+	t.Helper()
+	dir := filepath.Join(root, name, "projects", name)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(dir, ".project.json"), projectJSON)
+}
+
+func TestPlanPrefersTheProjectLevelCopy(t *testing.T) {
+	// Both copies exist and disagree. v1 edited the project in its own worktree,
+	// so that copy is the one the migration keeps. The main copy is dropped, and
+	// the warning says how many sessions it had so the user can check it.
+	root := newV1Workspace(t, v1ConfigJSON)
+	writeV1Project(t, root, "alpha", `{"name":"alpha","billing":{"rate":200},"time":[{"start":"2026-01-01T00:00:00Z","end":"2026-01-01T01:00:00Z","duration":3600,"rounded":3600}]}`)
+	writeWorktreeConfig(t, root, "alpha", `{"name":"alpha","billing":{"rate":300}}`)
+
+	plan, err := NewPlan(root, &fakeGit{})
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+	alpha := plan.Projects.Projects["alpha"]
+	if alpha.Billing.Rate != 300 {
+		t.Errorf("rate = %v, want 300 from the project-level copy", alpha.Billing.Rate)
+	}
+	if len(alpha.Sessions) != 0 {
+		t.Errorf("sessions = %v, want none: the main copy's session is dropped", alpha.Sessions)
+	}
+
+	want := "alpha: dropped grind/projects/alpha/.project.json (1 session, 0 tasks); kept alpha/projects/alpha/.project.json"
+	if !containsString(plan.Warnings, want) {
+		t.Errorf("warnings = %v, want %q", plan.Warnings, want)
+	}
+}
+
+func TestPlanIdenticalCopiesWarnNothing(t *testing.T) {
+	// Identical copies lose nothing, so there is nothing to tell the user.
+	root := newV1Workspace(t, v1ConfigJSON)
+	same := `{"name":"alpha","billing":{"rate":200}}`
+	writeV1Project(t, root, "alpha", same)
+	writeWorktreeConfig(t, root, "alpha", same)
+
+	plan, err := NewPlan(root, &fakeGit{})
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+	for _, warning := range plan.Warnings {
+		if strings.Contains(warning, "dropped") {
+			t.Errorf("warnings = %v, want no dropped-copy warning for identical files", plan.Warnings)
+		}
+	}
+}
+
+func TestPlanFindsSlashNamedProjectAndCleansItsParent(t *testing.T) {
+	// v1 names a project after its branch, so "feature/issue-feature" is one
+	// project whose config sits two directories deep on main. The migration
+	// must find it under that name, and once it is removed the empty "feature"
+	// directory it leaves behind must go too.
+	root := newV1Workspace(t, v1ConfigJSON)
+	writeV1Project(t, root, "feature/issue-feature", `{"name":"feature/issue-feature","billing":{"rate":150}}`)
+
+	g := &fakeGit{}
+	plan, err := NewPlan(root, g)
+	if err != nil {
+		t.Fatalf("NewPlan() error = %v", err)
+	}
+	if _, ok := plan.Projects.Projects["feature/issue-feature"]; !ok {
+		t.Fatalf("projects = %v, want feature/issue-feature", plan.Projects.Projects)
+	}
+
+	ws := &workspace.Workspace{
+		Root:         root,
+		BareRepo:     filepath.Join(root, ".grind.repo.git"),
+		MainWorktree: filepath.Join(root, ".main"),
+	}
+	if err := Apply(ws, plan, g); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".main", "projects", "feature")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("empty projects/feature/ left behind: %v", err)
+	}
+}
+
 func containsString(haystack []string, needle string) bool {
 	for _, s := range haystack {
 		if s == needle {

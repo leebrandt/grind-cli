@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/leebrandt/grind/internal/config"
 	"github.com/leebrandt/grind/internal/git"
@@ -100,10 +101,13 @@ func Apply(ws *workspace.Workspace, p *Plan, g git.Git) error {
 	// main worktree, so they are resolved against the LIVE one — grinder after
 	// the move, which is where the directories are now. Removing them by their
 	// pre-move absolute path would quietly do nothing.
+	projectsRoot := filepath.Join(ws.MainWorktree, "projects")
 	for _, dir := range p.RemoveDirs {
-		if err := os.RemoveAll(filepath.Join(ws.MainWorktree, p.relMain(dir))); err != nil {
+		live := filepath.Join(ws.MainWorktree, p.relMain(dir))
+		if err := os.RemoveAll(live); err != nil {
 			return grinderr.WrapSystem(err, "remove %s", dir)
 		}
+		removeEmptyParents(live, projectsRoot)
 	}
 
 	// 5. One commit, staging exactly the paths this migration touched. Never
@@ -142,4 +146,16 @@ func (p *Plan) relMain(path string) string {
 		return path
 	}
 	return rel
+}
+
+// removeEmptyParents removes directories left empty between a removed project
+// and the projects/ root. A slash-named project ("feature/issue-feature") leaves
+// its parent ("feature/") behind once its own directory is gone. The walk stops
+// at the first non-empty directory, and never removes projects/ itself.
+func removeEmptyParents(removed, projectsRoot string) {
+	for dir := filepath.Dir(removed); strings.HasPrefix(dir, projectsRoot+string(filepath.Separator)); dir = filepath.Dir(dir) {
+		if err := os.Remove(dir); err != nil {
+			return
+		}
+	}
 }

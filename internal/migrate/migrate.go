@@ -19,9 +19,11 @@
 package migrate
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -159,17 +161,22 @@ func NewPlanAt(root string, g git.Git, clk clock.Clock) (*Plan, error) {
 		return nil, err
 	}
 
-	names, err := projectNames(ws.Root, filepath.Join(fromMain, "projects"))
+	names, err := projectNames(ws.Root, fromMain)
 	if err != nil {
 		return nil, err
 	}
 
 	nextTaskID := firstTaskID
 	for _, name := range names {
-		src := locateProjectConfig(ws.Root, fromMain, name)
+		src, shadowed := locateProjectConfig(ws.Root, fromMain, name)
 		v1, err := readV1Project(src)
 		if err != nil {
 			return nil, err
+		}
+		if shadowed != nil {
+			if err := plan.warnShadowed(name, fromMain, src, *shadowed); err != nil {
+				return nil, err
+			}
 		}
 
 		// The project's createdAt comes from the commit that added its config
@@ -261,23 +268,42 @@ func readV1Config(path string) (v1Config, error) {
 // migration's contract: tasks are renumbered in this order, so the same
 // workspace always migrates to the same IDs.
 //
-// Names come from two places because v1 moved them: <main>/projects/ holds them
-// on the default branch, and older workspaces left the config in the project
-// worktree at <name>/projects/<name>/.
-func projectNames(root, projectsDir string) ([]string, error) {
+// A v1 project's name is its branch name, and branch names may contain slashes
+// (feature/issue-feature). On main the config then sits one or more directories
+// deeper (projects/feature/issue-feature/.project.json), so the main side is
+// walked recursively and a project's name is its directory path under projects/.
+//
+// Names also come from the project worktrees, because each project keeps its
+// own config at <name>/projects/<name>/.project.json.
+func projectNames(root, fromMain string) ([]string, error) {
 	seen := map[string]bool{}
 
-	entries, err := os.ReadDir(projectsDir)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, grinderr.WrapSystem(err, "read %s", projectsDir)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() {
-			seen[entry.Name()] = true
+	projectsDir := filepath.Join(fromMain, "projects")
+	err := filepath.WalkDir(projectsDir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			// No projects/ at all is an empty workspace, not an error.
+			if path == projectsDir && errors.Is(err, fs.ErrNotExist) {
+				return nil
+			}
+			return grinderr.WrapSystem(err, "read %s", path)
 		}
+		if !entry.IsDir() || path == projectsDir {
+			return nil
+		}
+		if exists(filepath.Join(path, ".project.json")) {
+			rel, err := filepath.Rel(projectsDir, path)
+			if err != nil {
+				return grinderr.WrapSystem(err, "name project at %s", path)
+			}
+			seen[filepath.ToSlash(rel)] = true
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 
-	entries, err = os.ReadDir(root)
+	entries, err := os.ReadDir(root)
 	if err != nil {
 		return nil, grinderr.WrapSystem(err, "read %s", root)
 	}
@@ -310,17 +336,75 @@ type projectSource struct {
 	rel  string
 }
 
-// locateProjectConfig prefers the main worktree, which is where v1 kept the
-// config last, and falls back to the project worktree where older workspaces
-// left it. A config on main always wins: it is the one the branch history
-// records.
-func locateProjectConfig(root, fromMain, name string) projectSource {
-	rel := filepath.Join("projects", name, ".project.json")
-	if path := filepath.Join(fromMain, rel); exists(path) {
-		return projectSource{name: name, path: path, rel: rel}
+// locateProjectConfig returns the config the migration uses for a project: the
+// project-level copy at <name>/projects/<name>/.project.json when it exists,
+// otherwise the copy on main at grind/projects/<name>/.project.json.
+//
+// This is the reverse of "main always wins", and the reason is what v1 did:
+// each project was edited in its own worktree, so that copy is the one the
+// project was working from. When both exist, the main copy is returned as
+// shadowed, so the caller can report what the migration is about to drop.
+func locateProjectConfig(root, fromMain, name string) (chosen projectSource, shadowed *projectSource) {
+	project := projectSource{
+		name: name,
+		path: filepath.Join(root, name, "projects", name, ".project.json"),
+		rel:  filepath.Join(name, "projects", name, ".project.json"),
 	}
-	legacy := filepath.Join(name, "projects", name, ".project.json")
-	return projectSource{name: name, path: filepath.Join(root, legacy), rel: legacy}
+	main := projectSource{
+		name: name,
+		path: filepath.Join(fromMain, "projects", name, ".project.json"),
+		rel:  filepath.Join("projects", name, ".project.json"),
+	}
+	if !exists(project.path) {
+		return main, nil
+	}
+	if exists(main.path) {
+		return project, &main
+	}
+	return project, nil
+}
+
+// warnShadowed reports a main-side copy the migration drops because the
+// project-level copy was used instead. Identical files lose nothing and are not
+// reported. Different files may hold sessions the kept copy does not, so the
+// dropped copy's counts are printed for the user to check by hand.
+func (p *Plan) warnShadowed(name, fromMain string, kept projectSource, dropped projectSource) error {
+	same, err := sameFile(kept.path, dropped.path)
+	if err != nil {
+		return err
+	}
+	if same {
+		return nil
+	}
+	old, err := readV1Project(dropped)
+	if err != nil {
+		return err
+	}
+	p.warnf(name, "dropped %s (%s, %s); kept %s",
+		filepath.Join(filepath.Base(fromMain), dropped.rel),
+		countOf(len(old.Time), "session"), countOf(len(old.Tasks), "task"), kept.rel)
+	return nil
+}
+
+// countOf renders a count with the right noun: "1 session", "2 sessions".
+func countOf(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
+}
+
+// sameFile reports whether two files have identical bytes.
+func sameFile(a, b string) (bool, error) {
+	dataA, err := os.ReadFile(a)
+	if err != nil {
+		return false, grinderr.WrapSystem(err, "read %s", a)
+	}
+	dataB, err := os.ReadFile(b)
+	if err != nil {
+		return false, grinderr.WrapSystem(err, "read %s", b)
+	}
+	return bytes.Equal(dataA, dataB), nil
 }
 
 // readV1Project parses one .project.json, naming the file in any error so the
