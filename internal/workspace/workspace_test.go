@@ -103,6 +103,76 @@ func TestRequireNotFound(t *testing.T) {
 	}
 }
 
+func TestV1MainWorktreePath(t *testing.T) {
+	// v1 called the main worktree "grind". The name lives here — not spelled
+	// out at each call site — for the same reason ".main" does.
+	if got, want := V1MainWorktreePath("/ws"), "/ws/grind"; got != want {
+		t.Errorf("V1MainWorktreePath() = %q, want %q", got, want)
+	}
+}
+
+func TestRequireExplainsAV1Workspace(t *testing.T) {
+	dir := t.TempDir()
+	// A v1 workspace has the bare repo and a main worktree called grind/,
+	// but no .main/ — which is exactly the state that used to produce an
+	// os.ErrNotExist about .projects.json.
+	for _, sub := range []string{".grind.repo.git", "grind"} {
+		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	_, err := Require(dir)
+	if err == nil {
+		t.Fatal("Require(v1 workspace) = nil error, want the migrate hint")
+	}
+	var user *grinderr.User
+	if !errors.As(err, &user) {
+		t.Fatalf("expected *grinderr.User, got %T", err)
+	}
+	want := "This workspace was created by grind v1. Run 'grind migrate' to convert it."
+	if err.Error() != want {
+		t.Errorf("message = %q, want %q", err.Error(), want)
+	}
+}
+
+func TestRequirePrefersMainWhenBothExist(t *testing.T) {
+	// A migrated workspace can briefly have both directories (an interrupted
+	// run moving grind/ to .main/). .main/ is what v2 uses, so its presence
+	// must win: the v1 hint is for workspaces v2 cannot read at all.
+	dir := t.TempDir()
+	for _, sub := range []string{".grind.repo.git", "grind", ".main"} {
+		if err := os.MkdirAll(filepath.Join(dir, sub), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	ws, err := Require(dir)
+	if err != nil {
+		t.Fatalf("Require() error = %v", err)
+	}
+	if ws.MainWorktree != filepath.Join(dir, ".main") {
+		t.Errorf("MainWorktree = %q", ws.MainWorktree)
+	}
+}
+
+func TestRequireMissingBothIsNotAWorkspace(t *testing.T) {
+	// The bare repo without either main worktree is not something v1 or v2
+	// ever produced; the plain "not a workspace" message is the honest one.
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".grind.repo.git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Require(dir)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if err.Error() != "Not in a grind workspace." {
+		t.Errorf("message = %q", err.Error())
+	}
+}
+
 func TestPathHelpers(t *testing.T) {
 	ws := &Workspace{
 		Root:         "/ws",
@@ -213,6 +283,14 @@ func (f *fakeGit) MergeBranch(worktreePath, branch string) error { return nil }
 func (f *fakeGit) RemoveWorktree(repoPath, worktreePath string) error { return nil }
 
 func (f *fakeGit) DeleteBranch(repoPath, branch string) error { return nil }
+
+// MoveWorktree and CommitAddDate exist to satisfy git.Git; migrate is the
+// only caller and these tests never migrate, so both are no-ops here.
+func (f *fakeGit) MoveWorktree(repoPath, from, to string) error { return nil }
+
+func (f *fakeGit) CommitAddDate(repoPath, branch, path string) (time.Time, error) {
+	return time.Time{}, nil
+}
 
 func TestInit(t *testing.T) {
 	dir := t.TempDir()

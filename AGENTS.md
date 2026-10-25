@@ -200,6 +200,7 @@ verb set, each verb means exactly one thing:
 | `reject` / `prune` | idea lifecycle | `reject idea 3`, `prune ideas` |
 | `publish` / `cancel` | project lifecycle | `publish my-blog`, `cancel my-blog` |
 | `invoice` | bill billable work | `invoice my-blog`, `invoice my-blog -n` |
+| `migrate` | convert a v1 workspace | `grind migrate`, `grind migrate -n` |
 | `read` | print to stdout | `read journal` |
 | `done` | complete a task | `done task 3` |
 | `config` | get/set/list config | `grind config`, `grind config billing.defaultRate 200`, `grind config my-blog billing.rate 250` |
@@ -255,12 +256,74 @@ social). Grind only produces the draft; n8n does everything else.
   is *not* silently replaced with the clock — a date that silently comes from
   somewhere else is a date nobody can reason about.
 
-### Migration (future slice)
+### Migration (v1 → v2)
 
-The v1 workspace migrates cleanly because the git history lives in the bare
-repo, which is reused as-is. `grind migrate` will: rename `grind/` →
-`.main/` (a `git worktree move`), consolidate `grind/projects/*/.project.json`
-into `.projects.json`, and commit. Project worktrees are untouched.
+`grind migrate` converts a v1 workspace into the v2 layout **in place**: it
+renames `grind/` → `.main/` (a `git worktree move`), consolidates
+`grind/projects/*/.project.json` into `.projects.json`, moves v1's invoices to
+`.main/invoices/<project>/<id>/`, creates the layout directories v1 never made
+(`invoices/`, `published/`, the `.gitkeep`s), rewrites `.grind.json` in v2's
+canonical form and commits the lot as `Migrate workspace from grind v1`. The
+bare repo, the branches and the project worktrees are untouched — the history
+is the history, and the worktrees' `.git` files point at
+`.grind.repo.git/worktrees/<name>`, not at the main worktree.
+
+The rules that matter when reading or changing `internal/migrate`:
+
+- **Plan, then apply.** `NewPlan` reads the v1 workspace and computes the whole
+  migration — mapping, task renumbering, `createdAt` derivation, warnings —
+  without writing anything. `Apply` executes it. `--dry-run` is "plan and
+  stop", and every mapping rule is testable without arranging a filesystem.
+- **`git worktree move` gets ABSOLUTE paths, always.** A relative destination
+  resolves against the *repository* directory, so the worktree lands at
+  `.grind.repo.git/.main` and every path in the workspace silently breaks.
+  `git.MoveWorktree` asserts both paths are absolute so a caller cannot
+  reintroduce it; `TestMoveWorktree` is the regression guard.
+- **The migration is resumable.** One step — the move — cannot be rolled back
+  by writing a file, so the v1 main worktree is defined as "`grind/` if it
+  exists, otherwise `.main/`". A re-run after an interruption finds the v1
+  files at their new path and finishes. An interrupted migration is a second
+  invocation, not a manual repair.
+- **State is written before anything is destroyed, and deletion comes last.**
+  `Apply` runs in this order: write `.grind.json` and `.projects.json` into the
+  v1 main worktree, create the layout directories, move the invoices,
+  `git worktree move`, delete v1's per-project directories, one commit. The
+  state files go first so they travel with the rename, and the one destructive
+  step (deleting `projects/<name>/`, whose content is now in `.projects.json`,
+  the entry's `idea` field or `invoices/`) runs only after that content has a
+  home. Reordering this is how the migration starts losing data: configs
+  deleted before the move is even attempted are configs no re-run can find.
+  An interruption *after* the move leaves a complete-but-uncommitted `.main/`;
+  the next run says "already a v2 workspace" and `grind save` finishes it.
+- **`idea` is reduced to its title** with `ideas.ExtractTitle`, because v1
+  stored the whole idea file (`"# Second idea about video"`) and v2's
+  `new project` stores just the H1 text. A body below the heading is a loss,
+  so the plan warns about it by project name.
+- **Tasks are renumbered from 100** across projects in name order (then stored
+  order), because v1 allocated per-project IDs and v2's `done task <id>` is
+  global. `nextTaskId` lands one past the highest.
+- **`createdAt` is derived**, in order: the commit that added
+  `projects/<name>/.project.json` on the default branch, then the earliest
+  session start, then the config file's mtime, then the migration instant with
+  a warning.
+- **Dropped data is loud, not silent.** A non-USD `currency` and each v1
+  `publication` produce a warning line; a missing `billing.rate` warns that the
+  workspace default was used; a malformed `deadline` warns and is dropped.
+- **A dirty v1 worktree does not block the migration and is not swept up.**
+  v1's `config` and `journal` never committed, so workspaces in use are
+  routinely dirty. Migrate commits only the paths it changed and tells the user
+  to run `grind save` for the rest. It refuses only on unmerged paths.
+- **Every other command explains a v1 workspace.** When the bare repo exists
+  but `.main/` does not while `grind/` does, `workspace.Require` returns
+  `This workspace was created by grind v1. Run 'grind migrate' to convert it.`
+  instead of an `os.ErrNotExist` about `.projects.json`.
+
+Known limitations, documented rather than fixed: a migrated project publishes
+with v1's branch shape nested inside it (`projects/<name>/projects/<name>/…`)
+because v2's `MergeBranch` re-roots the whole branch tree; the bare repo's
+`worktrees/grind` metadata directory keeps its name, so `.main/.git` still
+reads `…/worktrees/grind`; and migrated invoices keep their v1 ids
+(`2026-10-25T21-12-46`) rather than v2's `20060102T15-04-05`.
 
 ## Slices
 
@@ -280,7 +343,7 @@ and what's next.
 | 8 | Config | ✅ done |
 | 9 | Publish/cancel | ✅ done |
 | 10 | Invoice | ✅ done |
-| 11 | Migrate (v1 workspace conversion) | ⬜ |
+| 11 | Migrate (v1 workspace conversion) | ✅ done |
 
 ## Build & test
 

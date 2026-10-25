@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -367,6 +368,58 @@ func (g *execGit) RemoveWorktree(repoPath, worktreePath string) error {
 // in a worktree.
 func (g *execGit) DeleteBranch(repoPath, branch string) error {
 	return run(repoPath, "branch", "-D", branch)
+}
+
+// MoveWorktree runs `git worktree move <from> <to>` in the bare repo.
+//
+// Both paths are asserted absolute before git runs. This is not defensive
+// programming for its own sake: `git worktree move grind .main` resolves the
+// destination relative to the REPOSITORY directory, so the worktree lands at
+// .grind.repo.git/.main — inside the bare repo — and every path in the
+// workspace silently points at nothing afterwards. The assertion lives here,
+// in the one place that builds the command, so no caller can reintroduce it.
+func (g *execGit) MoveWorktree(repoPath, from, to string) error {
+	if !filepath.IsAbs(from) || !filepath.IsAbs(to) {
+		return grinderr.NewSystem(fmt.Sprintf(
+			"refusing to move worktree: both paths must be absolute (got %q, %q)", from, to))
+	}
+	return run(repoPath, "worktree", "move", from, to)
+}
+
+// CommitAddDate returns the author date of the commit that first added path
+// on branch.
+//
+// `git log --diff-filter=A --format=%aI` lists only commits that ADDED the
+// path, newest first, so the last line is the original addition — the date
+// the project was created. A path that was added, deleted and added again
+// keeps its first creation date, which is the honest answer for createdAt.
+//
+// The branch is spelled refs/heads/<branch> rather than a bare name for the
+// same reason LastCommitDate's comment explains: a bare name can resolve to a
+// remote-tracking ref or be ambiguous with a tag.
+func (g *execGit) CommitAddDate(repoPath, branch, path string) (time.Time, error) {
+	out, err := output(repoPath, "log", "--diff-filter=A", "--format=%aI", "refs/heads/"+branch, "--", path)
+	if err != nil {
+		// A branch with no commits is an empty result, not a failure — but
+		// only after ruling out real git breakage, so verify the ref exists.
+		exists, existsErr := branchExists(repoPath, branch)
+		if existsErr == nil && !exists {
+			return time.Time{}, nil
+		}
+		return time.Time{}, err
+	}
+	if out == "" {
+		return time.Time{}, nil
+	}
+
+	// Oldest last: git log walks newest first, so the final line is the
+	// adding commit.
+	lines := strings.Split(out, "\n")
+	added, err := time.Parse(time.RFC3339, lines[len(lines)-1])
+	if err != nil {
+		return time.Time{}, grinderr.WrapSystem(err, "parse add date %q", lines[len(lines)-1])
+	}
+	return added, nil
 }
 
 // LastCommitDate returns the time of the branch's most recent commit.

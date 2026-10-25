@@ -73,6 +73,14 @@ func (f *fakeGit) RemoveWorktree(repoPath, worktreePath string) error { return n
 
 func (f *fakeGit) DeleteBranch(repoPath, branch string) error { return nil }
 
+// MoveWorktree and CommitAddDate exist to satisfy git.Git; migrate is the
+// only caller and these tests never migrate, so both are no-ops here.
+func (f *fakeGit) MoveWorktree(repoPath, from, to string) error { return nil }
+
+func (f *fakeGit) CommitAddDate(repoPath, branch, path string) (time.Time, error) {
+	return time.Time{}, nil
+}
+
 // Ensure the git package is linked in tests that reference the interface.
 var _ git.Git = (*fakeGit)(nil)
 

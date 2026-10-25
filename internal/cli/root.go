@@ -22,7 +22,7 @@ import (
 
 // version is the grind release version. Bump the patch number at the end of
 // each slice so `grind -v` tells you which build you are testing.
-const version = "0.90.8"
+const version = "0.90.9"
 
 // NewRootCmd builds the complete grind command tree. The git implementation
 // is injected so tests can substitute a fake.
@@ -92,6 +92,7 @@ func NewRootCmdWithClock(g git.Git, clk clock.Clock) *cobra.Command {
 	root.AddCommand(newPublishCmd(projectsSvc))
 	root.AddCommand(newCancelCmd(projectsSvc))
 	root.AddCommand(newInvoiceCmd(invoiceSvc, clk))
+	root.AddCommand(newMigrateCmd(g, clk))
 
 	return root
 }

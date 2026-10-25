@@ -61,6 +61,12 @@ type fakeGit struct {
 	removeWorktree []string
 	// deleteBranch records every DeleteBranch call.
 	deleteBranch []string
+	// moveWorktree records every MoveWorktree call as {from, to}.
+	moveWorktree [][2]string
+	// addDates maps a repo-relative path to the author date of the commit
+	// that added it, for CommitAddDate. A missing path means "no adding
+	// commit", which is the zero time.
+	addDates map[string]time.Time
 }
 
 type fakeCommit struct {
@@ -169,6 +175,23 @@ func (f *fakeGit) RemoveWorktree(repoPath, worktreePath string) error {
 func (f *fakeGit) DeleteBranch(repoPath, branch string) error {
 	f.deleteBranch = append(f.deleteBranch, branch)
 	return nil
+}
+
+// MoveWorktree records the call and, like the real git, refuses relative
+// paths — the trap migrate exists to avoid.
+func (f *fakeGit) MoveWorktree(repoPath, from, to string) error {
+	if !filepath.IsAbs(from) || !filepath.IsAbs(to) {
+		return grinderr.NewSystem("refusing to move worktree: both paths must be absolute")
+	}
+	f.moveWorktree = append(f.moveWorktree, [2]string{from, to})
+	return nil
+}
+
+// CommitAddDate returns the recorded add date for a path, or the zero time
+// when none was recorded — the same "no adding commit" result the real
+// implementation gives.
+func (f *fakeGit) CommitAddDate(repoPath, branch, path string) (time.Time, error) {
+	return f.addDates[path], nil
 }
 
 // LastCommitDate returns the branch's recorded commit time, or the zero
@@ -451,8 +474,8 @@ func TestVersionFlag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "0.90.8\n" {
-		t.Errorf("output = %q, want %q", out, "0.90.8\n")
+	if out != "0.90.9\n" {
+		t.Errorf("output = %q, want %q", out, "0.90.9\n")
 	}
 }
 

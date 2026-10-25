@@ -111,6 +111,20 @@ type Git interface {
 	// AFTER the worktree is removed — git refuses to delete a branch that is
 	// checked out in a worktree.
 	DeleteBranch(repoPath, branch string) error
+	// MoveWorktree runs `git worktree move <from> <to>` in the bare repo.
+	// Both paths must be absolute, and the implementation enforces that:
+	// `git worktree move grind .main` resolves ".main" against the REPOSITORY
+	// directory, not the shell's working directory, and silently drops the
+	// worktree inside .grind.repo.git where every workspace path breaks. Only
+	// migrate uses this, to rename grind/ to .main/.
+	MoveWorktree(repoPath, from, to string) error
+	// CommitAddDate returns the author date of the commit that first added
+	// path on branch, looking at the branch ref with --diff-filter=A. It
+	// returns the zero time when no commit on the branch ever added the path
+	// (or the branch does not exist), so callers can fall through to their
+	// next candidate. migrate uses it to derive a project's createdAt, which
+	// v1 never stored.
+	CommitAddDate(repoPath, branch, path string) (time.Time, error)
 }
 
 // PushError is returned by PushAll when git push fails. It carries git's

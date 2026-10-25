@@ -57,6 +57,13 @@ func Find(startDir string) (*Workspace, error) {
 
 // Require is like Find but turns "not found" into a user error so commands
 // can fail with a helpful message.
+//
+// It also explains a v1 workspace. A v1 workspace has the bare repo and a
+// main worktree called grind/, so discovery succeeds while every v2 path
+// points at a .main/ that does not exist — and the command dies with an
+// os.ErrNotExist about .projects.json that says nothing about migrate. The
+// hint costs one stat and saves the next person the twenty minutes it cost
+// the last one.
 func Require(startDir string) (*Workspace, error) {
 	ws, err := Find(startDir)
 	if err != nil {
@@ -65,7 +72,20 @@ func Require(startDir string) (*Workspace, error) {
 	if ws == nil {
 		return nil, grinderr.NewUser("Not in a grind workspace.")
 	}
+	if !isDir(ws.MainWorktree) {
+		if isDir(V1MainWorktreePath(ws.Root)) {
+			return nil, grinderr.NewUser("This workspace was created by grind v1. Run 'grind migrate' to convert it.")
+		}
+		return nil, grinderr.NewUser("Not in a grind workspace.")
+	}
 	return ws, nil
+}
+
+// V1MainWorktreePath returns the path v1 used for the main worktree —
+// <root>/grind, where v2 uses <root>/.main. Only migrate reads it, to find
+// the workspace it is converting; every other command works from .main.
+func V1MainWorktreePath(root string) string {
+	return filepath.Join(root, "grind")
 }
 
 // Init creates a new workspace skeleton in dir.

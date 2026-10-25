@@ -1444,3 +1444,157 @@ func TestDeleteBranch(t *testing.T) {
 		t.Error("DeleteBranch() = nil error, want failure for checked-out branch")
 	}
 }
+
+func TestMoveWorktree(t *testing.T) {
+	setGitIdentity(t)
+	root := t.TempDir()
+	g := New()
+
+	// Build a v1-shaped workspace: the main worktree is a sibling called
+	// "grind", not the v2 name ".main".
+	bareRepo := filepath.Join(root, ".grind.repo.git")
+	if err := g.InitBare(bareRepo); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.InitialCommit(bareRepo, "main"); err != nil {
+		t.Fatal(err)
+	}
+	from := filepath.Join(root, "grind")
+	if err := g.AddWorktree(bareRepo, from, "main"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(from, "notes.md"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Commit(from, "Add notes.md", "notes.md"); err != nil {
+		t.Fatal(err)
+	}
+
+	to := filepath.Join(root, ".main")
+	if err := g.MoveWorktree(bareRepo, from, to); err != nil {
+		t.Fatalf("MoveWorktree() error = %v", err)
+	}
+
+	// The worktree is at the destination and its content came along.
+	if _, err := os.Stat(filepath.Join(to, "notes.md")); err != nil {
+		t.Errorf("notes.md did not move with the worktree: %v", err)
+	}
+	if _, err := os.Stat(from); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("old worktree path still exists: %v", err)
+	}
+
+	// THE trap this method exists for: a relative destination makes git
+	// resolve it against the repository directory, landing the worktree at
+	// .grind.repo.git/.main. It must never appear there.
+	if _, err := os.Stat(filepath.Join(bareRepo, ".main")); !errors.Is(err, os.ErrNotExist) {
+		t.Error("worktree landed inside the bare repo (.grind.repo.git/.main)")
+	}
+
+	// Git itself reports the new path, and the worktree still works.
+	list, err := output(bareRepo, "worktree", "list")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(list, to) {
+		t.Errorf("worktree list does not mention %s:\n%s", to, list)
+	}
+	if _, err := output(to, "status", "--porcelain"); err != nil {
+		t.Errorf("git status in moved worktree failed: %v", err)
+	}
+}
+
+func TestMoveWorktreeRequiresAbsolutePaths(t *testing.T) {
+	setGitIdentity(t)
+	root := t.TempDir()
+	g := New()
+
+	bareRepo := filepath.Join(root, ".grind.repo.git")
+	if err := g.InitBare(bareRepo); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.InitialCommit(bareRepo, "main"); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.AddWorktree(bareRepo, filepath.Join(root, "grind"), "main"); err != nil {
+		t.Fatal(err)
+	}
+
+	// A relative path is the bug that silently breaks every path in the
+	// workspace, so the implementation must refuse it outright rather than
+	// let git interpret it against the repository directory.
+	err := g.MoveWorktree(bareRepo, "grind", ".main")
+	if err == nil {
+		t.Fatal("MoveWorktree(relative) = nil error, want a refusal")
+	}
+	if !strings.Contains(err.Error(), "absolute") {
+		t.Errorf("error = %q, want it to explain that paths must be absolute", err)
+	}
+
+	// Nothing moved: grind/ is still there and .main was never created.
+	if _, statErr := os.Stat(filepath.Join(root, "grind")); statErr != nil {
+		t.Errorf("grind/ was moved despite the refusal: %v", statErr)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, ".main")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Error(".main exists after a refused move")
+	}
+}
+
+func TestCommitAddDate(t *testing.T) {
+	setGitIdentity(t)
+	bareRepo, main := newBareRepoWithMain(t)
+	g := New()
+
+	// The first commit that adds the path is the one that dates the
+	// project, so an ADD at one date followed by a MODIFY at a later date
+	// must report the add.
+	t.Setenv("GIT_AUTHOR_DATE", "2026-03-04T05:06:07+00:00")
+	t.Setenv("GIT_COMMITTER_DATE", "2026-03-04T05:06:07+00:00")
+	dir := filepath.Join(main, "projects", "alpha")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfgPath := filepath.Join(dir, ".project.json")
+	if err := os.WriteFile(cfgPath, []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Commit(main, "Create project: alpha", "projects/alpha/.project.json"); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Setenv("GIT_AUTHOR_DATE", "2026-05-06T07:08:09+00:00")
+	t.Setenv("GIT_COMMITTER_DATE", "2026-05-06T07:08:09+00:00")
+	if err := os.WriteFile(cfgPath, []byte(`{"name":"alpha"}`+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := g.Commit(main, "Save on 05/06/2026", "projects/alpha/.project.json"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := g.CommitAddDate(bareRepo, "main", "projects/alpha/.project.json")
+	if err != nil {
+		t.Fatalf("CommitAddDate() error = %v", err)
+	}
+	want := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Errorf("CommitAddDate() = %v, want the adding commit's date %v", got, want)
+	}
+
+	// A path that was never added has no date. That is an empty result, not
+	// an error — createdAt falls through to the next rule.
+	missing, err := g.CommitAddDate(bareRepo, "main", "projects/nope/.project.json")
+	if err != nil {
+		t.Fatalf("CommitAddDate(unknown path) error = %v", err)
+	}
+	if !missing.IsZero() {
+		t.Errorf("CommitAddDate(unknown path) = %v, want zero time", missing)
+	}
+
+	// So does a branch that does not exist.
+	noBranch, err := g.CommitAddDate(bareRepo, "no-such-branch", "projects/alpha/.project.json")
+	if err != nil {
+		t.Fatalf("CommitAddDate(unknown branch) error = %v", err)
+	}
+	if !noBranch.IsZero() {
+		t.Errorf("CommitAddDate(unknown branch) = %v, want zero time", noBranch)
+	}
+}
