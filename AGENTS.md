@@ -300,7 +300,7 @@ The rules that matter when reading or changing `internal/migrate`:
   `new project` stores just the H1 text. A body below the heading is a loss,
   so the plan warns about it by project name.
 - **Tasks are renumbered from 100** across projects in name order (then stored
-  order), because v1 allocated per-project IDs and v2's `done task <id>` is
+  order), because v1 allocated per-project IDs and v2's `finish task <id>` is
   global. `nextTaskId` lands one past the highest.
 - **`createdAt` is derived**, in order: the commit that added
   `projects/<name>/.project.json` on the default branch, then the earliest
