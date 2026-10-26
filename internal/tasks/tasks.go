@@ -236,3 +236,47 @@ func (s *Service) Complete(ws *workspace.Workspace, id int) (*config.Task, bool,
 
 	return nil, false, grinderr.NewUser(fmt.Sprintf("Task #%d not found.", id))
 }
+
+// SetDue changes the due date of the task with the given global ID.
+// dueDate is already normalized to YYYY-MM-DD by the CLI. Setting the
+// date a task already has is a no-op: nothing is written and nothing is
+// committed. Done tasks may still be re-dated; canceled tasks may not,
+// because they died with their project.
+func (s *Service) SetDue(ws *workspace.Workspace, id int, dueDate string) (*config.Task, error) {
+	projects, err := config.ReadProjects(ws.ProjectsConfigPath())
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, grinderr.NewUser(fmt.Sprintf("Task #%d not found.", id))
+		}
+		return nil, err
+	}
+
+	// Same global search as Complete: IDs are unique across projects.
+	for name := range projects.Projects {
+		entry := projects.Projects[name]
+		for i := range entry.Tasks {
+			if entry.Tasks[i].ID != id {
+				continue
+			}
+			if entry.Tasks[i].Canceled {
+				return nil, grinderr.NewUser(fmt.Sprintf("Task #%d is canceled.", id))
+			}
+			if entry.Tasks[i].DueDate == dueDate {
+				return &entry.Tasks[i], nil
+			}
+
+			entry.Tasks[i].DueDate = dueDate
+			projects.Projects[name] = entry
+
+			if err := config.WriteProjects(ws.ProjectsConfigPath(), projects); err != nil {
+				return nil, err
+			}
+			if err := s.Git.Commit(ws.MainWorktree, fmt.Sprintf("Set due date for task #%d", id), ".projects.json"); err != nil {
+				return nil, err
+			}
+			return &entry.Tasks[i], nil
+		}
+	}
+
+	return nil, grinderr.NewUser(fmt.Sprintf("Task #%d not found.", id))
+}

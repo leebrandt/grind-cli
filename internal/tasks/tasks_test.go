@@ -626,3 +626,90 @@ func TestCompleteRefusesCanceled(t *testing.T) {
 		t.Errorf("commits = %d, want 0", len(fake.commits))
 	}
 }
+
+func TestSetDueUpdatesAndCommits(t *testing.T) {
+	ws := newTestWorkspace(t)
+	addProject(t, ws, "my-blog", task(100, "Write intro", "", false))
+	fake := &fakeGit{}
+	svc := NewService(fake)
+	svc.Clock = clock.NewFake(testNow)
+
+	got, err := svc.SetDue(ws, 100, "2026-09-20")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.DueDate != "2026-09-20" {
+		t.Errorf("DueDate = %q, want 2026-09-20", got.DueDate)
+	}
+
+	projects, err := config.ReadProjects(ws.ProjectsConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := projects.Projects["my-blog"].Tasks[0].DueDate; d != "2026-09-20" {
+		t.Errorf("stored DueDate = %q, want 2026-09-20", d)
+	}
+
+	if len(fake.commits) != 1 {
+		t.Fatalf("commits = %d, want 1", len(fake.commits))
+	}
+	c := fake.commits[0]
+	if c.message != "Set due date for task #100" {
+		t.Errorf("commit message = %q", c.message)
+	}
+	if len(c.paths) != 1 || c.paths[0] != ".projects.json" {
+		t.Errorf("commit paths = %v", c.paths)
+	}
+}
+
+func TestSetDueSameDateSkipsCommit(t *testing.T) {
+	ws := newTestWorkspace(t)
+	addProject(t, ws, "my-blog", task(100, "Write intro", "2026-09-20", false))
+	fake := &fakeGit{}
+	svc := NewService(fake)
+
+	if _, err := svc.SetDue(ws, 100, "2026-09-20"); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.commits) != 0 {
+		t.Errorf("commits = %d, want 0 (nothing changed)", len(fake.commits))
+	}
+}
+
+func TestSetDueUnknownID(t *testing.T) {
+	ws := newTestWorkspace(t)
+	addProject(t, ws, "my-blog", task(100, "Write intro", "", false))
+	fake := &fakeGit{}
+
+	_, err := NewService(fake).SetDue(ws, 999, "2026-09-20")
+	var user *grinderr.User
+	if !errors.As(err, &user) {
+		t.Fatalf("error = %T %v, want *grinderr.User", err, err)
+	}
+	if err.Error() != "Task #999 not found." {
+		t.Errorf("message = %q", err.Error())
+	}
+	if len(fake.commits) != 0 {
+		t.Errorf("commits = %d, want 0", len(fake.commits))
+	}
+}
+
+func TestSetDueRefusesCanceled(t *testing.T) {
+	ws := newTestWorkspace(t)
+	canceled := task(100, "Write intro", "", false)
+	canceled.Canceled = true
+	addProject(t, ws, "my-blog", canceled)
+	fake := &fakeGit{}
+
+	_, err := NewService(fake).SetDue(ws, 100, "2026-09-20")
+	var user *grinderr.User
+	if !errors.As(err, &user) {
+		t.Fatalf("error = %T %v, want *grinderr.User", err, err)
+	}
+	if err.Error() != "Task #100 is canceled." {
+		t.Errorf("message = %q", err.Error())
+	}
+	if len(fake.commits) != 0 {
+		t.Errorf("commits = %d, want 0", len(fake.commits))
+	}
+}

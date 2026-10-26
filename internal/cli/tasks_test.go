@@ -356,3 +356,48 @@ func TestDueColor(t *testing.T) {
 		})
 	}
 }
+
+func TestEditTaskSetsDueDate(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+	if _, err := execute(t, fake, "new", "task", "my-blog", "Write intro"); err != nil {
+		t.Fatalf("new task: %v", err)
+	}
+
+	out, err := execute(t, fake, "edit", "task", "100", "-d", "2026-09-20")
+	if err != nil {
+		t.Fatalf("edit task: %v", err)
+	}
+	if !strings.Contains(out, "Task 100 due 2026-09-20") {
+		t.Errorf("output = %q", out)
+	}
+
+	last := fake.commits[len(fake.commits)-1]
+	if last.message != "Set due date for task #100" {
+		t.Errorf("last commit message = %q", last.message)
+	}
+}
+
+func TestEditTaskRequiresDueFlag(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	_, err := execute(t, fake, "edit", "task", "100")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if err.Error() != "Give a due date with -d, e.g. grind edit task 100 -d 2026-09-20" {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestEditTaskBadDate(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	_, err := execute(t, fake, "edit", "task", "100", "-d", "banana")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+}

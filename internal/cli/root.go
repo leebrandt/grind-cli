@@ -76,7 +76,7 @@ func NewRootCmdWithClock(g git.Git, clk clock.Clock) *cobra.Command {
 	root.AddCommand(newIdeasAliasCmd(ideasSvc))
 	root.AddCommand(newProjectsAliasCmd(projectsSvc))
 	root.AddCommand(newTasksAliasCmd(tasksSvc))
-	root.AddCommand(newEditCmd(ideasSvc, projectsSvc, clk))
+	root.AddCommand(newEditCmd(ideasSvc, projectsSvc, tasksSvc, clk))
 	root.AddCommand(newRejectCmd(ideasSvc))
 	root.AddCommand(newPruneCmd(ideasSvc))
 	root.AddCommand(newShowCmd(projectsSvc))
