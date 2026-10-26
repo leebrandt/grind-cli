@@ -401,3 +401,29 @@ func TestEditTaskBadDate(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestCancelTaskCommand(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+	if _, err := execute(t, fake, "new", "task", "my-blog", "Write intro"); err != nil {
+		t.Fatalf("new task: %v", err)
+	}
+
+	out, err := execute(t, fake, "cancel", "task", "100")
+	if err != nil {
+		t.Fatalf("cancel task: %v", err)
+	}
+	if !strings.Contains(out, "Task 100 canceled.") {
+		t.Errorf("output = %q", out)
+	}
+
+	// The canceled task must vanish from the open list.
+	list, err := execute(t, fake, "list", "tasks")
+	if err != nil {
+		t.Fatalf("list tasks: %v", err)
+	}
+	if strings.Contains(list, "Write intro") {
+		t.Errorf("canceled task still listed:\n%s", list)
+	}
+}

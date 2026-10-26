@@ -280,3 +280,46 @@ func (s *Service) SetDue(ws *workspace.Workspace, id int, dueDate string) (*conf
 
 	return nil, grinderr.NewUser(fmt.Sprintf("Task #%d not found.", id))
 }
+
+// CancelTask marks the task with the given global ID canceled, so it drops
+// out of every list. Returns the task and whether it was already canceled
+// (true = no write, no commit). A completed task is refused: canceling it
+// would hide a record of work that was actually done.
+func (s *Service) CancelTask(ws *workspace.Workspace, id int) (*config.Task, bool, error) {
+	projects, err := config.ReadProjects(ws.ProjectsConfigPath())
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, false, grinderr.NewUser(fmt.Sprintf("Task #%d not found.", id))
+		}
+		return nil, false, err
+	}
+
+	// Same global search as Complete and SetDue.
+	for name := range projects.Projects {
+		entry := projects.Projects[name]
+		for i := range entry.Tasks {
+			if entry.Tasks[i].ID != id {
+				continue
+			}
+			if entry.Tasks[i].Canceled {
+				return &entry.Tasks[i], true, nil
+			}
+			if entry.Tasks[i].Done {
+				return nil, false, grinderr.NewUser(fmt.Sprintf("Task #%d is already completed.", id))
+			}
+
+			entry.Tasks[i].Canceled = true
+			projects.Projects[name] = entry
+
+			if err := config.WriteProjects(ws.ProjectsConfigPath(), projects); err != nil {
+				return nil, false, err
+			}
+			if err := s.Git.Commit(ws.MainWorktree, fmt.Sprintf("Cancel task #%d", id), ".projects.json"); err != nil {
+				return nil, false, err
+			}
+			return &entry.Tasks[i], false, nil
+		}
+	}
+
+	return nil, false, grinderr.NewUser(fmt.Sprintf("Task #%d not found.", id))
+}

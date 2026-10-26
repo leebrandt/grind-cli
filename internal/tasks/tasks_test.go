@@ -713,3 +713,87 @@ func TestSetDueRefusesCanceled(t *testing.T) {
 		t.Errorf("commits = %d, want 0", len(fake.commits))
 	}
 }
+
+func TestCancelTaskSetsCanceledAndCommits(t *testing.T) {
+	ws := newTestWorkspace(t)
+	addProject(t, ws, "my-blog", task(100, "Write intro", "", false))
+	fake := &fakeGit{}
+
+	got, alreadyCanceled, err := NewService(fake).CancelTask(ws, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if alreadyCanceled {
+		t.Error("alreadyCanceled = true, want false")
+	}
+	if !got.Canceled {
+		t.Error("returned task not canceled")
+	}
+
+	projects, err := config.ReadProjects(ws.ProjectsConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !projects.Projects["my-blog"].Tasks[0].Canceled {
+		t.Error("stored task not canceled")
+	}
+	if len(fake.commits) != 1 {
+		t.Fatalf("commits = %d, want 1", len(fake.commits))
+	}
+	if c := fake.commits[0]; c.message != "Cancel task #100" || len(c.paths) != 1 || c.paths[0] != ".projects.json" {
+		t.Errorf("commit = %q %v", c.message, c.paths)
+	}
+}
+
+func TestCancelTaskAlreadyCanceledSkipsCommit(t *testing.T) {
+	ws := newTestWorkspace(t)
+	canceled := task(100, "Write intro", "", false)
+	canceled.Canceled = true
+	addProject(t, ws, "my-blog", canceled)
+	fake := &fakeGit{}
+
+	_, alreadyCanceled, err := NewService(fake).CancelTask(ws, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !alreadyCanceled {
+		t.Error("alreadyCanceled = false, want true")
+	}
+	if len(fake.commits) != 0 {
+		t.Errorf("commits = %d, want 0", len(fake.commits))
+	}
+}
+
+func TestCancelTaskRefusesDone(t *testing.T) {
+	// A canceled task disappears from every list, so canceling a finished
+	// task would erase a record of completed work. Refuse instead.
+	ws := newTestWorkspace(t)
+	addProject(t, ws, "my-blog", task(100, "Write intro", "", true))
+	fake := &fakeGit{}
+
+	_, _, err := NewService(fake).CancelTask(ws, 100)
+	var user *grinderr.User
+	if !errors.As(err, &user) {
+		t.Fatalf("error = %T %v, want *grinderr.User", err, err)
+	}
+	if err.Error() != "Task #100 is already completed." {
+		t.Errorf("message = %q", err.Error())
+	}
+	if len(fake.commits) != 0 {
+		t.Errorf("commits = %d, want 0", len(fake.commits))
+	}
+}
+
+func TestCancelTaskUnknownID(t *testing.T) {
+	ws := newTestWorkspace(t)
+	addProject(t, ws, "my-blog", task(100, "Write intro", "", false))
+
+	_, _, err := NewService(&fakeGit{}).CancelTask(ws, 999)
+	var user *grinderr.User
+	if !errors.As(err, &user) {
+		t.Fatalf("error = %T %v, want *grinderr.User", err, err)
+	}
+	if err.Error() != "Task #999 not found." {
+		t.Errorf("message = %q", err.Error())
+	}
+}

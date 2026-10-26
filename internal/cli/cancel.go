@@ -9,6 +9,7 @@ import (
 
 	"github.com/leebrandt/grind/internal/grinderr"
 	"github.com/leebrandt/grind/internal/projects"
+	"github.com/leebrandt/grind/internal/tasks"
 	"github.com/leebrandt/grind/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -16,7 +17,11 @@ import (
 // newCancelCmd builds `grind cancel <project> [-y]`, which marks a project
 // canceled in .projects.json and cleans up its worktree/branch per the
 // user's choice. The entry stays as a record.
-func newCancelCmd(svc *projects.Service) *cobra.Command {
+//
+// `cancel task <id>` is a subcommand of the same verb. Cobra dispatches on
+// the first argument, so a project named "task" is shadowed — the same
+// trade-off as `edit idea`.
+func newCancelCmd(svc *projects.Service, tasksSvc *tasks.Service) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "cancel <project>",
 		Short: "Cancel a project (keeps the entry as a record)",
@@ -67,7 +72,39 @@ func newCancelCmd(svc *projects.Service) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolP("yes", "y", false, "skip the cleanup prompt (delete worktree and branch)")
+	cmd.AddCommand(newCancelTaskCmd(tasksSvc))
 	return cmd
+}
+
+// newCancelTaskCmd builds `grind cancel task <id>`. It hides one open task
+// from every list; the record stays in .projects.json.
+func newCancelTaskCmd(svc *tasks.Service) *cobra.Command {
+	return &cobra.Command{
+		Use:   "task <id>",
+		Short: "Cancel a single task",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ws, err := workspace.Require(".")
+			if err != nil {
+				return err
+			}
+			id, err := parseTaskID(args[0])
+			if err != nil {
+				return err
+			}
+			task, alreadyCanceled, err := svc.CancelTask(ws, id)
+			if err != nil {
+				return err
+			}
+			out := cmd.OutOrStdout()
+			if alreadyCanceled {
+				fmt.Fprintf(out, "Task %d is already canceled.\n", task.ID)
+			} else {
+				fmt.Fprintf(out, "Task %d canceled.\n", task.ID)
+			}
+			return nil
+		},
+	}
 }
 
 // isInside reports whether path is inside dir (or equal to it), using a
