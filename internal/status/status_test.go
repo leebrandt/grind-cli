@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -503,5 +504,40 @@ func TestStatusCarriesLongTerm(t *testing.T) {
 	}
 	if got["leenix"] {
 		t.Error("leenix LongTerm = true, want false")
+	}
+}
+
+func TestStatusListsLongTermAfterRegular(t *testing.T) {
+	// Regular projects come first, then long-term ones; each group is
+	// alphabetical. Worked time does not reorder them: "zeta" has none
+	// and still sorts above "alpha", which has 5h worked, because the
+	// group and the name are what the dashboard orders by.
+	now := statusNow
+	end := now.Add(-time.Hour)
+	worked := []config.Session{{Start: now.Add(-6 * time.Hour), End: &end, Rounded: 5 * 3600}}
+	projects := config.ProjectsConfig{
+		Version: 1,
+		Projects: map[string]config.ProjectEntry{
+			"zeta":  {Name: "zeta"},
+			"alpha": {Name: "alpha", LongTerm: true, Sessions: worked},
+			"mu":    {Name: "mu", LongTerm: true},
+			"beta":  {Name: "beta", Sessions: worked},
+		},
+	}
+	ws := newTestWorkspace(t, projects)
+	svc := NewService(&fakeGit{})
+	svc.Clock = clock.NewFake(statusNow)
+
+	rows, err := svc.Status(ws)
+	if err != nil {
+		t.Fatalf("Status() error = %v", err)
+	}
+	var got []string
+	for _, r := range rows {
+		got = append(got, r.Name)
+	}
+	want := []string{"beta", "zeta", "alpha", "mu"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("order = %v, want %v", got, want)
 	}
 }

@@ -53,7 +53,7 @@ type Row struct {
 	LastSession  string // TimeAgo of the latest session start, or "never"
 	LastCommit   string // TimeAgo of the branch's last commit, or "never"
 	IsActive     bool
-	TotalSeconds int64 // for sorting
+	TotalSeconds int64 // raw worked seconds; Worked is its rendering
 	// HasUnbilled is true when the project has billable sessions left
 	// (any ended session with Invoiced == false). It is a color signal
 	// only — the dashboard gains no column for it, because the number is
@@ -65,9 +65,8 @@ type Row struct {
 	LongTerm bool
 }
 
-// Status returns the dashboard rows, sorted by total worked seconds
-// descending, then name ascending (so the order is deterministic even
-// between projects with identical worked time).
+// Status returns the dashboard rows: regular projects first, then
+// long-term projects, each group sorted by name ascending.
 func (s *Service) Status(ws *workspace.Workspace) ([]Row, error) {
 	projects, err := config.ReadProjects(ws.ProjectsConfigPath())
 	if err != nil {
@@ -91,9 +90,11 @@ func (s *Service) Status(ws *workspace.Workspace) ([]Row, error) {
 		rows = append(rows, row)
 	}
 
+	// Regular projects first, long-term after; alphabetical within each
+	// group. Worked time is shown in its column but does not reorder rows.
 	sort.Slice(rows, func(i, j int) bool {
-		if rows[i].TotalSeconds != rows[j].TotalSeconds {
-			return rows[i].TotalSeconds > rows[j].TotalSeconds
+		if rows[i].LongTerm != rows[j].LongTerm {
+			return !rows[i].LongTerm
 		}
 		return rows[i].Name < rows[j].Name
 	})
