@@ -64,6 +64,25 @@ func newWwdCmd(statusSvc *status.Service, tasksSvc *tasks.Service) *cobra.Comman
 	return cmd
 }
 
+// longTermMarker flags long-term projects in the Project column. It is a
+// prefix, not a color, so it survives piping and stays visible on the
+// green/yellow name colors that already carry status.
+const longTermMarker = "★ "
+
+// nameGutter is the blank space that stands in for the marker on rows
+// without one. Reserving it on every row keeps the names aligned: without
+// it, a starred row would shift its name two columns right of the rest.
+const nameGutter = "  "
+
+// nameCell is the plain text of a row's Project cell: the marker (or the
+// gutter) followed by the name.
+func nameCell(row status.Row) string {
+	if row.LongTerm {
+		return longTermMarker + row.Name
+	}
+	return nameGutter + row.Name
+}
+
 // divider returns v1's dashboard divider exactly: a leading space, 27
 // box-drawing dashes, " The GrindCLI ", and 30 more dashes. A constant
 // string would work, but building it from the counts keeps the two
@@ -88,7 +107,9 @@ func divider() string {
 // plain text first and coloring the padded cell keeps the visible columns
 // straight — the same approach v1's Table class uses.
 func renderStatusTable(out io.Writer, rows []status.Row, palette color.Palette) error {
-	headers := []string{"Project", "Worked", "Tasks", "Last Session", "Last Commit"}
+	// The Project header is indented by the marker gutter so it lines up
+	// with the names beneath it, whether or not a row carries a marker.
+	headers := []string{nameGutter + "Project", "Worked", "Tasks", "Last Session", "Last Commit"}
 
 	// Column widths come from the widest PLAIN cell (header included), so
 	// the padding math never sees ANSI codes.
@@ -97,7 +118,7 @@ func renderStatusTable(out io.Writer, rows []status.Row, palette color.Palette) 
 		widths[i] = utf8.RuneCountInString(h)
 	}
 	for _, row := range rows {
-		cells := []string{row.Name, row.WorkedHours, strconv.Itoa(row.TaskCount), row.LastSession, row.LastCommit}
+		cells := []string{nameCell(row), row.WorkedHours, strconv.Itoa(row.TaskCount), row.LastSession, row.LastCommit}
 		for i, c := range cells {
 			if n := utf8.RuneCountInString(c); n > widths[i] {
 				widths[i] = n
@@ -109,7 +130,7 @@ func renderStatusTable(out io.Writer, rows []status.Row, palette color.Palette) 
 	for _, row := range rows {
 		// Color is applied AFTER padding: the visible text is already
 		// column-width wide, so the ANSI codes cannot shift it.
-		name := padRight(row.Name, widths[0])
+		name := padRight(nameCell(row), widths[0])
 		switch {
 		case row.IsActive:
 			name = palette.Green(name)

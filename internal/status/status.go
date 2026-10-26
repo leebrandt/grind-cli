@@ -60,6 +60,9 @@ type Row struct {
 	// one flag away via `show --billing` and a sixth column would widen
 	// every row for it.
 	HasUnbilled bool
+	// LongTerm mirrors the project's longTerm flag so the dashboard can
+	// mark it. Read from the entry as-is: false and unset are the same.
+	LongTerm bool
 }
 
 // Status returns the dashboard rows, sorted by total worked seconds
@@ -160,6 +163,7 @@ func (s *Service) rowFor(ws *workspace.Workspace, name string, entry config.Proj
 		LastCommit:   lastCommitDisplay,
 		IsActive:     isActive,
 		HasUnbilled:  hasUnbilled,
+		LongTerm:     entry.LongTerm,
 		TotalSeconds: total,
 	}, nil
 }

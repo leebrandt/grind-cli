@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func TestWwdCommand(t *testing.T) {
@@ -123,4 +124,57 @@ func TestWwdNotInWorkspace(t *testing.T) {
 	if err.Error() != "Not in a grind workspace." {
 		t.Errorf("error = %q", err.Error())
 	}
+}
+
+func TestWwdMarksLongTermProjects(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	createProject(t, fake, "my-blog")
+	createProject(t, fake, "leenix")
+	clk := cliNow()
+	if _, err := executeAt(t, fake, clk, "config", "my-blog", "longTerm", "true"); err != nil {
+		t.Fatalf("config my-blog longTerm true: %v", err)
+	}
+
+	out, err := executeAt(t, fake, clk, "wwd")
+	if err != nil {
+		t.Fatalf("wwd: %v", err)
+	}
+
+	// Each name must start in the same column, starred or not, so the
+	// marker sits in the gutter instead of shifting the row.
+	var starred, plain string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "my-blog") {
+			starred = line
+		}
+		if strings.Contains(line, "leenix") {
+			plain = line
+		}
+	}
+	if !strings.Contains(starred, "★ my-blog") {
+		t.Errorf("long-term row = %q, want it to show \"★ my-blog\"", starred)
+	}
+	if strings.Contains(plain, "★") {
+		t.Errorf("plain row = %q, must not carry the marker", plain)
+	}
+	// Columns are counted in runes, not bytes: ★ is three bytes but one
+	// column on screen.
+	if got, want := runeIndex(starred, "my-blog"), runeIndex(plain, "leenix"); got != want {
+		t.Errorf("name columns differ: my-blog at %d, leenix at %d\n%s", got, want, out)
+	}
+	header := strings.Split(out, "\n")[0]
+	if got, want := runeIndex(header, "Project"), runeIndex(plain, "leenix"); got != want {
+		t.Errorf("Project header at %d, names at %d\n%s", got, want, out)
+	}
+}
+
+// runeIndex is strings.Index measured in runes, so a multi-byte glyph
+// before the needle counts as the single column it occupies on screen.
+func runeIndex(s, needle string) int {
+	i := strings.Index(s, needle)
+	if i < 0 {
+		return -1
+	}
+	return utf8.RuneCountInString(s[:i])
 }

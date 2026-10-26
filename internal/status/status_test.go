@@ -475,3 +475,33 @@ func TestStatusSkipsCanceledTasks(t *testing.T) {
 		t.Errorf("TaskUrgency = %q, want none", rows[0].TaskUrgency)
 	}
 }
+
+func TestStatusCarriesLongTerm(t *testing.T) {
+	// The dashboard can only mark what the row carries, so the flag must
+	// travel from the entry onto the row — and an unset flag stays false.
+	projects := config.ProjectsConfig{
+		Version: 1,
+		Projects: map[string]config.ProjectEntry{
+			"my-blog": {Name: "my-blog", LongTerm: true},
+			"leenix":  {Name: "leenix"},
+		},
+	}
+	ws := newTestWorkspace(t, projects)
+	svc := NewService(&fakeGit{})
+	svc.Clock = clock.NewFake(statusNow)
+
+	rows, err := svc.Status(ws)
+	if err != nil {
+		t.Fatalf("Status() error = %v", err)
+	}
+	got := map[string]bool{}
+	for _, r := range rows {
+		got[r.Name] = r.LongTerm
+	}
+	if !got["my-blog"] {
+		t.Error("my-blog LongTerm = false, want true")
+	}
+	if got["leenix"] {
+		t.Error("leenix LongTerm = true, want false")
+	}
+}
