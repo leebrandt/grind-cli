@@ -1,0 +1,256 @@
+%% Grind CLI architecture
+%% Commands route through thin service layers; services own state files and
+%% call the git.Git interface; git.Git drives the bare repo and the worktrees.
+%% Solid arrows: calls / reads / writes.
+%% Dashed arrows: launches the user's editor.
+%% Hidden aliases (ideas, projects, tasks, journal) reuse the same routes as
+%% list ideas, list projects, list tasks, and edit journal.
+%% Render with mermaid-cli:  mmdc -i docs/grind-architecture.mmd -o grind.png
+%% Or paste the contents into https://mermaid.live
+
+flowchart LR
+
+  %% ------------------------------------------------------------------
+  %% External programs
+  %% ------------------------------------------------------------------
+  subgraph EXT["External"]
+    direction TB
+    editor["$EDITOR / $VISUAL / vi"]
+  end
+
+  %% ------------------------------------------------------------------
+  %% CLI layer: internal/cli, one Cobra command per verb
+  %% ------------------------------------------------------------------
+  subgraph CLI["CLI — internal/cli (Cobra)"]
+    direction TB
+    cInit["init"]
+    cNewIdea["new idea"]
+    cNewProject["new project"]
+    cNewTask["new task"]
+    cListIdeas["list ideas"]
+    cListProjects["list projects"]
+    cListTasks["list tasks"]
+    cEditProject["edit &lt;project&gt;"]
+    cEditIdea["edit idea"]
+    cEditJournal["edit journal"]
+    cEditTask["edit task"]
+    cReject["reject idea"]
+    cPrune["prune ideas"]
+    cShow["show"]
+    cWork["work"]
+    cSave["save"]
+    cPush["push"]
+    cPull["pull"]
+    cFinish["finish task"]
+    cCancelTask["cancel task"]
+    cReadJournal["read journal"]
+    cWwd["wwd"]
+    cConfig["config"]
+    cPublish["publish"]
+    cCancel["cancel &lt;project&gt;"]
+    cInvoice["invoice"]
+    cMigrate["migrate"]
+  end
+
+  %% ------------------------------------------------------------------
+  %% Domain services
+  %% ------------------------------------------------------------------
+  subgraph SVC["Domain services"]
+    direction TB
+    workspaceSvc["workspace<br/>discover · init · paths"]
+    ideasSvc["ideas"]
+    projectsSvc["projects<br/>lifecycle · sessions"]
+    tasksSvc["tasks"]
+    journalSvc["journal"]
+    statusSvc["status<br/>(read-only)"]
+    invoiceSvc["invoice"]
+    syncSvc["sync"]
+    configSvc["config"]
+    migrateSvc["migrate"]
+  end
+
+  %% ------------------------------------------------------------------
+  %% Git interface: every call is os/exec with an argv array
+  %% ------------------------------------------------------------------
+  subgraph GIT["git.Git — os/exec, argv only"]
+    direction TB
+    gitInit["InitBare · InitialCommit<br/>AddWorktree · CreateBranch"]
+    gitWrite["Commit · CommitAll<br/>HasChanges · IsPathClean"]
+    gitSync["PushAll · PushBranch · FetchAll<br/>IsAncestor · FastForwardWorktree<br/>FastForwardRef · ListRemoteBranches<br/>RemoteURL · SetRemoteURL"]
+    gitLife["MergeBranch · RemoveWorktree<br/>DeleteBranch · MoveWorktree<br/>LastCommitDate · CommitAddDate"]
+  end
+
+  %% ------------------------------------------------------------------
+  %% Filesystem: the workspace layout
+  %% ------------------------------------------------------------------
+  subgraph FS["Workspace filesystem"]
+    direction TB
+    bare[".grind.repo.git/<br/>bare repository"]
+    mainWt[".main/<br/>main worktree (state)"]
+    grindJson[".main/.grind.json<br/>workspace config"]
+    projectsJson[".main/.projects.json<br/>all project state"]
+    ideasDir[".main/ideas/*.md"]
+    journalDir[".main/journal/YYYY-MM-DD.md"]
+    invoicesDir[".main/invoices/&lt;project&gt;/&lt;id&gt;/invoice.md"]
+    publishedDir[".main/published/"]
+    mergedDir[".main/projects/&lt;project&gt;/<br/>merged work product"]
+    projectWt["&lt;project&gt;/<br/>project worktree (work product)"]
+    v1Main["grind/<br/>v1 main worktree (migrate input)"]
+    remote[("origin remote")]
+  end
+
+  %% ------------------------------------------------------------------
+  %% Command -> service routing
+  %% ------------------------------------------------------------------
+  cInit --> workspaceSvc
+
+  cNewIdea --> ideasSvc
+  cNewProject --> projectsSvc
+  cNewTask --> tasksSvc
+
+  cListIdeas --> ideasSvc
+  cListProjects --> projectsSvc
+  cListTasks --> tasksSvc
+
+  cEditProject --> projectsSvc
+  cEditIdea --> ideasSvc
+  cEditJournal --> journalSvc
+  cEditTask --> tasksSvc
+
+  cReject --> ideasSvc
+  cPrune --> ideasSvc
+
+  cShow --> projectsSvc
+  cWork --> projectsSvc
+  cSave -->|"with project"| projectsSvc
+  cSave -->|"no project"| gitWrite
+
+  cPush --> syncSvc
+  cPull --> syncSvc
+
+  cFinish --> tasksSvc
+  cCancelTask --> tasksSvc
+
+  cReadJournal --> journalSvc
+  cWwd --> statusSvc
+  cWwd --> tasksSvc
+
+  cConfig --> configSvc
+  cPublish --> projectsSvc
+  cCancel --> projectsSvc
+  cInvoice --> invoiceSvc
+  cMigrate --> migrateSvc
+
+  %% ------------------------------------------------------------------
+  %% Commands that launch the editor
+  %% ------------------------------------------------------------------
+  cNewIdea -.->|"no title: EditTemp"| editor
+  cEditProject -.->|"Open"| editor
+  cEditIdea -.->|"Open"| editor
+  cEditJournal -.->|"Open"| editor
+  cWork -.->|"Open worktree"| editor
+
+  editor -.->|"edits"| ideasDir
+  editor -.->|"edits"| journalDir
+  editor -.->|"edits"| projectWt
+
+  %% ------------------------------------------------------------------
+  %% Service -> git operations
+  %% ------------------------------------------------------------------
+  workspaceSvc --> gitInit
+  workspaceSvc --> gitWrite
+
+  ideasSvc --> gitWrite
+  projectsSvc --> gitInit
+  projectsSvc --> gitWrite
+  projectsSvc --> gitLife
+  tasksSvc --> gitWrite
+  invoiceSvc --> gitWrite
+  configSvc --> gitWrite
+  statusSvc --> gitLife
+
+  syncSvc --> gitSync
+  syncSvc --> gitInit
+
+  migrateSvc --> gitInit
+  migrateSvc --> gitWrite
+  migrateSvc --> gitLife
+
+  %% ------------------------------------------------------------------
+  %% Service -> filesystem
+  %% ------------------------------------------------------------------
+  workspaceSvc --> bare
+  workspaceSvc --> mainWt
+
+  ideasSvc --> ideasDir
+  journalSvc --> journalDir
+
+  projectsSvc --> projectsJson
+  projectsSvc --> projectWt
+  projectsSvc --> mergedDir
+
+  tasksSvc --> projectsJson
+  statusSvc --> projectsJson
+
+  invoiceSvc --> projectsJson
+  invoiceSvc --> invoicesDir
+
+  syncSvc --> bare
+  syncSvc --> projectWt
+  syncSvc --> projectsJson
+  syncSvc --> grindJson
+
+  configSvc --> grindJson
+  configSvc --> projectsJson
+
+  migrateSvc --> mainWt
+  migrateSvc --> grindJson
+  migrateSvc --> projectsJson
+  migrateSvc --> invoicesDir
+  migrateSvc --> publishedDir
+  migrateSvc --> v1Main
+
+  %% ------------------------------------------------------------------
+  %% Git -> filesystem and remote
+  %% ------------------------------------------------------------------
+  gitInit --> bare
+  gitInit --> mainWt
+  gitInit --> projectWt
+
+  gitWrite --> mainWt
+  gitWrite --> projectWt
+
+  gitSync --> bare
+  gitSync --> mainWt
+  gitSync --> projectWt
+  gitSync --> remote
+
+  gitLife --> bare
+  gitLife --> mainWt
+  gitLife --> projectWt
+  gitLife --> mergedDir
+  gitLife --> v1Main
+
+  %% ------------------------------------------------------------------
+  %% Invariants worth remembering while reading the diagram
+  %% ------------------------------------------------------------------
+  subgraph NOTES["Notes"]
+    direction TB
+    note["Invariants<br/>• No shell interpolation: every git call is argv-based<br/>• Commits stage named paths; CommitAll is the save exception<br/>• .main holds state; project worktrees hold work product<br/>• edit and journal leave files dirty for grind save<br/>• save is local; push and pull are the only network verbs"]
+  end
+
+  classDef cmd fill:#e8f0fe,stroke:#4a6fa5,color:#1a1a1a
+  classDef svc fill:#fff4e5,stroke:#b26a00,color:#1a1a1a
+  classDef git fill:#e6f4ea,stroke:#2e7d32,color:#1a1a1a
+  classDef fs fill:#f3e8fd,stroke:#6a1b9a,color:#1a1a1a
+  classDef ext fill:#f5f5f5,stroke:#777777,color:#1a1a1a
+  classDef remoteStyle fill:#fdecea,stroke:#c62828,color:#1a1a1a
+  classDef noteStyle fill:#fffbe6,stroke:#b08a00,color:#1a1a1a
+
+  class cInit,cNewIdea,cNewProject,cNewTask,cListIdeas,cListProjects,cListTasks,cEditProject,cEditIdea,cEditJournal,cEditTask,cReject,cPrune,cShow,cWork,cSave,cPush,cPull,cFinish,cCancelTask,cReadJournal,cWwd,cConfig,cPublish,cCancel,cInvoice,cMigrate cmd
+  class workspaceSvc,ideasSvc,projectsSvc,tasksSvc,journalSvc,statusSvc,invoiceSvc,syncSvc,configSvc,migrateSvc svc
+  class gitInit,gitWrite,gitSync,gitLife git
+  class bare,mainWt,grindJson,projectsJson,ideasDir,journalDir,invoicesDir,publishedDir,mergedDir,projectWt,v1Main fs
+  class editor ext
+  class remote remoteStyle
+  class note noteStyle
