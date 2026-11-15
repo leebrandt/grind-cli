@@ -1197,3 +1197,32 @@ func TestValidateNewNameRejectsExistingDirectory(t *testing.T) {
 		t.Errorf("error = %q, want it to mention the existing directory", err.Error())
 	}
 }
+
+func TestValidateNewNameMissingProjectsFile(t *testing.T) {
+	ws := newTestWorkspace(t)
+	// No .projects.json means an empty workspace, not an error. Create and
+	// ValidateNewName share readProjectsOrEmpty, and this is the case that
+	// proves the shared fallback still answers the same way for both.
+	if err := os.Remove(ws.ProjectsConfigPath()); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(newFakeGit())
+
+	if err := svc.ValidateNewName(ws, "my-blog"); err != nil {
+		t.Fatalf("ValidateNewName with no projects file: %v", err)
+	}
+}
+
+func TestBillingDefaults(t *testing.T) {
+	// Create stores these values on the project and the wizard prints them on
+	// the confirm screen; both go through this one function, so this test is
+	// the contract between the two.
+	cfg := config.Default()
+	cfg.Billing = config.BillingConfig{RoundTo: "hour", DefaultRate: 200}
+
+	got := BillingDefaults(cfg)
+	want := config.BillingEntry{RoundTo: "hour", Rate: 200}
+	if got != want {
+		t.Errorf("BillingDefaults = %+v, want %+v", got, want)
+	}
+}

@@ -228,8 +228,8 @@ Workspace has two ideas, `0. My Blog` and `1. Video about Go`; no type flag.
 ```text
 $ grind new project
 Select an idea:
-  0. My Blog
-  1. Video about Go
+0. My Blog
+1. Video about Go
 
 Idea number: 0
 Project name [my-blog]:

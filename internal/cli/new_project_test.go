@@ -465,3 +465,92 @@ func TestPrompterAcceptsFinalLineWithoutNewline(t *testing.T) {
 		t.Error("third ask ok = true, want false at end of input")
 	}
 }
+
+func TestNewProjectInteractiveDropsTakenSuggestion(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	// my-blog already exists, and the new idea's title slugs to exactly that
+	// name. Offering the suggestion would invite the user to press Enter
+	// straight into "Project 'my-blog' already exists.", so the prompt must
+	// come up with no default at all.
+	createProject(t, fake, "my-blog")
+	if _, err := execute(t, fake, "new", "idea", "My Blog"); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := executeWithIn(t, fake, strings.NewReader("0\nother\ny\n"), "new", "project")
+	if err != nil {
+		t.Fatalf("new project: %v", err)
+	}
+	if strings.Contains(out, "[my-blog]") {
+		t.Errorf("a colliding suggestion must not be offered:\n%s", out)
+	}
+	if !strings.Contains(out, "Project name: ") {
+		t.Errorf("output missing the bare name prompt:\n%s", out)
+	}
+
+	projects, err := config.ReadProjects(filepath.Join(".main", ".projects.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := projects.Projects["other"]; !exists {
+		t.Error("other was not created")
+	}
+}
+
+func TestNewProjectInteractiveRepromptsUnknownConfirm(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	if _, err := execute(t, fake, "new", "idea", "My Blog"); err != nil {
+		t.Fatal(err)
+	}
+
+	// "maybe" is neither yes nor no. The question is asked again, but the
+	// summary above it is not reprinted — re-running that whole screen for
+	// a typo would bury the one line the user has to answer.
+	out, err := executeWithIn(t, fake, strings.NewReader("0\nmy-blog\nmaybe\ny\n"), "new", "project")
+	if err != nil {
+		t.Fatalf("new project: %v", err)
+	}
+	if got := strings.Count(out, "Create project? [Y/n] "); got != 2 {
+		t.Errorf("confirm prompt shown %d times, want 2:\n%s", got, out)
+	}
+	if got := strings.Count(out, "Project:  my-blog"); got != 1 {
+		t.Errorf("summary printed %d times, want 1:\n%s", got, out)
+	}
+
+	projects, err := config.ReadProjects(filepath.Join(".main", ".projects.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := projects.Projects["my-blog"]; !exists {
+		t.Error("my-blog was not created after an unrecognised confirm answer")
+	}
+}
+
+func TestNewProjectInteractiveEOFAtIdeaPrompt(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+
+	if _, err := execute(t, fake, "new", "idea", "My Blog"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Ideas exist but stdin is already closed: the list is printed, then the
+	// flow aborts instead of looping on an input that will never arrive.
+	out, err := executeWithIn(t, fake, strings.NewReader(""), "new", "project")
+	if err != nil {
+		t.Fatalf("new project: %v", err)
+	}
+	if !strings.Contains(out, "Select an idea:") {
+		t.Errorf("the idea list should be printed first:\n%s", out)
+	}
+	if !strings.HasSuffix(out, "Aborted.\n") {
+		t.Errorf("output should end with Aborted.:\n%s", out)
+	}
+	if len(fake.createBranch) != 0 {
+		t.Errorf("CreateBranch calls = %v, want none", fake.createBranch)
+	}
+}

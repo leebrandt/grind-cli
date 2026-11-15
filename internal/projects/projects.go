@@ -111,12 +111,9 @@ func (s *Service) Create(ws *workspace.Workspace, name, projectType, ideaFilenam
 		return nil, err
 	}
 
-	projects, err := config.ReadProjects(ws.ProjectsConfigPath())
+	projects, err := readProjectsOrEmpty(ws)
 	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return nil, err
-		}
-		projects = config.DefaultProjects()
+		return nil, err
 	}
 	if err := s.nameAvailable(ws, projects, name); err != nil {
 		return nil, err
@@ -160,11 +157,8 @@ func (s *Service) Create(ws *workspace.Workspace, name, projectType, ideaFilenam
 		Type: projectType,
 		// The idea value is the H1 header of the idea file, not the full
 		// content — the full content lives in the project's .idea file.
-		Idea: title,
-		Billing: config.BillingEntry{
-			RoundTo: cfg.Billing.RoundTo,
-			Rate:    cfg.Billing.DefaultRate,
-		},
+		Idea:    title,
+		Billing: BillingDefaults(cfg),
 		// Truncate to seconds so the stored timestamp matches the RFC3339
 		// shape in the spec (no fractional seconds).
 		CreatedAt: s.Clock.Now().UTC().Truncate(time.Second),
@@ -201,12 +195,9 @@ func (s *Service) ValidateNewName(ws *workspace.Workspace, name string) error {
 	if err := validateName(name); err != nil {
 		return err
 	}
-	projects, err := config.ReadProjects(ws.ProjectsConfigPath())
+	projects, err := readProjectsOrEmpty(ws)
 	if err != nil {
-		if !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		projects = config.DefaultProjects()
+		return err
 	}
 	return s.nameAvailable(ws, projects, name)
 }
@@ -229,6 +220,38 @@ func (s *Service) nameAvailable(ws *workspace.Workspace, projects config.Project
 		return grinderr.WrapSystem(err, "check project directory %s", worktreePath)
 	}
 	return nil
+}
+
+// readProjectsOrEmpty loads .projects.json, treating a missing file as an
+// empty workspace rather than an error: a workspace created by an older grind
+// version may not have one yet.
+//
+// Create and ValidateNewName both need exactly this fallback, and writing it
+// out twice is how the two would one day disagree about what "no projects
+// file" means. One helper, one answer.
+func readProjectsOrEmpty(ws *workspace.Workspace) (config.ProjectsConfig, error) {
+	projects, err := config.ReadProjects(ws.ProjectsConfigPath())
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return config.ProjectsConfig{}, err
+		}
+		return config.DefaultProjects(), nil
+	}
+	return projects, nil
+}
+
+// BillingDefaults returns the billing block a new project copies from the
+// workspace config at creation time.
+//
+// It is exported because the interactive flow prints these values on the
+// confirm screen before Create stores them. Routing both through one function
+// is what makes the promise "you confirm what gets written" true by
+// construction instead of by two implementations happening to agree.
+func BillingDefaults(cfg config.GrindConfig) config.BillingEntry {
+	return config.BillingEntry{
+		RoundTo: cfg.Billing.RoundTo,
+		Rate:    cfg.Billing.DefaultRate,
+	}
 }
 
 // List returns all projects sorted by name, skipping canceled ones. A

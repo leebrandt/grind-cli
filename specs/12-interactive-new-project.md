@@ -97,7 +97,9 @@ Run with zero positional arguments. Flow, in order:
    (exit 0). No prompt, nothing created. A workspace whose ideas are all
    rejected takes this path too.
 7. Print `Select an idea:` then `idea.String()` for each idea, then a blank
-   line.
+   line. `idea.String()` is the `grind list ideas` rendering verbatim
+   (`0. My Blog`, no indentation) — one renderer, so the numbers the user
+   types are the numbers `list ideas` prints.
 8. Prompt `Idea number: ` until the answer resolves:
    - end of input → print `Aborted.` and return nil (nothing created);
    - `parseIdeaNumber` error → print `err.Error()` and ask again;
@@ -204,8 +206,8 @@ No blank line and no remaining-ideas list follow it.
 ```text
 $ grind new project
 Select an idea:
-  0. My Blog
-  1. Video about Go
+0. My Blog
+1. Video about Go
 
 Idea number: 0
 Project name [my-blog]:

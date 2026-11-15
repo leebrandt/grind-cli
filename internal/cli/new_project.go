@@ -99,7 +99,7 @@ func runNewProjectInteractive(cmd *cobra.Command, ideasSvc *ideas.Service, proje
 	// The blank line separates the answers from the confirm screen, which
 	// reads as one unit.
 	fmt.Fprintln(out)
-	printConfirmSummary(out, name, projectType, chosen.Title, cfg.Billing)
+	printConfirmSummary(out, name, projectType, chosen.Title, projects.BillingDefaults(cfg))
 
 	proceed, err := askConfirm(p)
 	if err != nil {
@@ -215,7 +215,10 @@ func askConfirm(p *prompter) (proceed bool, err error) {
 // Create is about to store. The label column is 10 characters wide — one
 // wider than `grind show`'s 9 — because "Worktree:" is 9 characters and must
 // still have a space before its value.
-func printConfirmSummary(out io.Writer, name, projectType, ideaTitle string, billing config.BillingConfig) {
+//
+// billing comes from projects.BillingDefaults, the same function Create uses,
+// so the rate shown here cannot drift from the rate that gets written.
+func printConfirmSummary(out io.Writer, name, projectType, ideaTitle string, billing config.BillingEntry) {
 	displayType := projectType
 	if displayType == "" {
 		displayType = "—"
@@ -228,5 +231,5 @@ func printConfirmSummary(out io.Writer, name, projectType, ideaTitle string, bil
 	// The same symbol and rate formatting as `grind show`, so the confirm
 	// screen and the stored entry never disagree.
 	fmt.Fprintf(out, "%-10s%s%s/hr (%s)\n",
-		"Rate:", invoice.Symbol, formatRate(billing.DefaultRate), billing.RoundTo)
+		"Rate:", invoice.Symbol, formatRate(billing.Rate), billing.RoundTo)
 }
