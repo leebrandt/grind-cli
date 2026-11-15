@@ -102,7 +102,7 @@ func (s *Service) Create(ws *workspace.Workspace, name, projectType, ideaFilenam
 
 	// The config supplies both the valid project types and the billing
 	// defaults. A missing .grind.json falls back to the defaults.
-	cfg, err := readConfig(ws)
+	cfg, err := ReadConfig(ws)
 	if err != nil {
 		return nil, err
 	}
@@ -118,18 +118,11 @@ func (s *Service) Create(ws *workspace.Workspace, name, projectType, ideaFilenam
 		}
 		projects = config.DefaultProjects()
 	}
-	if _, exists := projects.Projects[name]; exists {
-		return nil, grinderr.NewUser(fmt.Sprintf("Project '%s' already exists.", name))
+	if err := s.nameAvailable(ws, projects, name); err != nil {
+		return nil, err
 	}
 
-	// The worktree path must be free, otherwise `git worktree add` would
-	// fail after the branch was already created.
 	worktreePath := ws.ProjectWorktreePath(name)
-	if _, err := os.Stat(worktreePath); err == nil {
-		return nil, grinderr.NewUser(fmt.Sprintf("Invalid project name %q: directory already exists", name))
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return nil, grinderr.WrapSystem(err, "check project directory %s", worktreePath)
-	}
 
 	// Worktree-first: the git operations are the risky ones. Doing them
 	// before touching state files means a failure never leaves
@@ -197,6 +190,45 @@ func (s *Service) Create(ws *workspace.Workspace, name, projectType, ideaFilenam
 	}
 
 	return entry, nil
+}
+
+// ValidateNewName checks every rule Create enforces about a new project's
+// name: format, reserved names, uniqueness in .projects.json, and a free
+// worktree directory. It returns the same user error Create would, so the
+// interactive flow can reject a name while the user is still typing instead
+// of after the confirm screen.
+func (s *Service) ValidateNewName(ws *workspace.Workspace, name string) error {
+	if err := validateName(name); err != nil {
+		return err
+	}
+	projects, err := config.ReadProjects(ws.ProjectsConfigPath())
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		projects = config.DefaultProjects()
+	}
+	return s.nameAvailable(ws, projects, name)
+}
+
+// nameAvailable checks the two rules that need state rather than syntax: the
+// name must not already be a project, and its worktree directory must be
+// free. It takes the loaded projects file because Create already has it in
+// hand; ValidateNewName loads its own because the interactive flow does not.
+func (s *Service) nameAvailable(ws *workspace.Workspace, projects config.ProjectsConfig, name string) error {
+	if _, exists := projects.Projects[name]; exists {
+		return grinderr.NewUser(fmt.Sprintf("Project '%s' already exists.", name))
+	}
+
+	// The worktree path must be free, otherwise `git worktree add` would
+	// fail after the branch was already created.
+	worktreePath := ws.ProjectWorktreePath(name)
+	if _, err := os.Stat(worktreePath); err == nil {
+		return grinderr.NewUser(fmt.Sprintf("Invalid project name %q: directory already exists", name))
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return grinderr.WrapSystem(err, "check project directory %s", worktreePath)
+	}
+	return nil
 }
 
 // List returns all projects sorted by name, skipping canceled ones. A
@@ -391,6 +423,52 @@ func writeEntry(ws *workspace.Workspace, name string, entry config.ProjectEntry)
 	return config.WriteProjects(ws.ProjectsConfigPath(), projects)
 }
 
+// SuggestName turns an idea title into a project-name suggestion: ASCII
+// lower case, every run of characters outside [a-z0-9] collapsed to a single
+// "-", with separators at either end never emitted. It returns "" when the
+// result cannot be a valid project name (empty, or not branch-safe), so
+// callers omit the suggestion rather than offer one that will be rejected.
+//
+// The workspace-independent half is deliberate: a suggestion that collides
+// with an existing project is filtered by the caller, which has the
+// workspace. Keeping this function pure is what makes its table test trivial.
+func SuggestName(title string) string {
+	// Only ASCII letters and digits survive, so explicit ranges are used
+	// rather than unicode.ToLower, which would quietly produce characters
+	// the rule forbids ("Café" must become "caf", not "café").
+	var b strings.Builder
+	pendingDash := false
+	for _, r := range title {
+		if r >= 'A' && r <= 'Z' {
+			r += 'a' - 'A'
+		}
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			// Emit the remembered separator only between words, never at
+			// the start: that is what turns ".main" into "main" and
+			// "  spaced" into "spaced" instead of leading with a dash.
+			if pendingDash && b.Len() > 0 {
+				b.WriteByte('-')
+			}
+			pendingDash = false
+			b.WriteRune(r)
+			continue
+		}
+		// Anything else (spaces, punctuation, non-ASCII letters) is a
+		// separator. Remembering it rather than writing it immediately is
+		// what collapses "Go & Rust!" into "go-rust", not "go---rust".
+		pendingDash = true
+	}
+	slug := b.String()
+	// The loop guarantees the slug's shape; this is the one check that ties
+	// the suggestion to the real name rule, so a future change to either
+	// side fails here rather than in a git error after the user pressed
+	// Enter.
+	if validateName(slug) != nil {
+		return ""
+	}
+	return slug
+}
+
 // validateName checks the project name rules from the spec. The name IS the
 // git branch name, so most rules are git's own check-ref-format rules.
 func validateName(name string) error {
@@ -443,9 +521,11 @@ func invalidBranchName(name string) string {
 	return ""
 }
 
-// readConfig loads .grind.json, falling back to defaults when the file is
+// ReadConfig loads .grind.json, falling back to defaults when the file is
 // missing (a workspace created by an older grind version may not have one).
-func readConfig(ws *workspace.Workspace) (config.GrindConfig, error) {
+// Exported because the interactive flow shows the billing values Create is
+// about to copy and validates -t before asking anything.
+func ReadConfig(ws *workspace.Workspace) (config.GrindConfig, error) {
 	cfg, err := config.Read(ws.GrindConfigPath())
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {

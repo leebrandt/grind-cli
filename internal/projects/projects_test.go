@@ -1095,3 +1095,105 @@ func TestListSkipsCanceled(t *testing.T) {
 		t.Errorf("list = %v, want %v", got, want)
 	}
 }
+
+func TestSuggestName(t *testing.T) {
+	tests := []struct {
+		title string
+		want  string
+	}{
+		{"My Blog", "my-blog"},
+		{"Video about Go", "video-about-go"},
+		{"Go & Rust!", "go-rust"},
+		{"Café Notes", "caf-notes"},
+		{"ALLCAPS", "allcaps"},
+		{"a..b", "a-b"},
+		{"a/b", "a-b"},
+		{"  2026 goals  ", "2026-goals"},
+		{"trailing---", "trailing"},
+		{"!!!", ""},
+		{"日本語", ""},
+		{".main", "main"},
+		{"HEAD", "head"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.title, func(t *testing.T) {
+			if got := SuggestName(tt.title); got != tt.want {
+				t.Errorf("SuggestName(%q) = %q, want %q", tt.title, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateNewName(t *testing.T) {
+	ws := newTestWorkspace(t)
+	svc := NewService(newFakeGit())
+
+	// A name that breaks no rule is accepted.
+	if err := svc.ValidateNewName(ws, "my-blog"); err != nil {
+		t.Fatalf("ValidateNewName(my-blog) = %v, want nil", err)
+	}
+
+	tests := []struct {
+		name string
+		want string // substring of the expected error
+	}{
+		{"", "name is empty"},
+		{"my blog", "must not contain whitespace"},
+		{"my\tblog", "must not contain whitespace"},
+		{".main", "reserved"},
+		{".grind.repo.git", "reserved"},
+		{"HEAD", "HEAD is reserved"},
+		{"foo.lock", "must not end in .lock"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := svc.ValidateNewName(ws, tt.name)
+			if err == nil {
+				t.Fatalf("ValidateNewName(%q) = nil, want an error", tt.name)
+			}
+			var user *grinderr.User
+			if !errors.As(err, &user) {
+				t.Errorf("ValidateNewName(%q) error type = %T, want *grinderr.User", tt.name, err)
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Errorf("ValidateNewName(%q) error = %q, want it to contain %q", tt.name, err.Error(), tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateNewNameRejectsExistingProject(t *testing.T) {
+	ws := newTestWorkspace(t)
+	projects := config.DefaultProjects()
+	projects.Projects["taken"] = config.ProjectEntry{Name: "taken"}
+	if err := config.WriteProjects(ws.ProjectsConfigPath(), projects); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(newFakeGit())
+
+	err := svc.ValidateNewName(ws, "taken")
+	if err == nil {
+		t.Fatal("ValidateNewName(taken) = nil, want an error")
+	}
+	if err.Error() != "Project 'taken' already exists." {
+		t.Errorf("error = %q", err.Error())
+	}
+}
+
+func TestValidateNewNameRejectsExistingDirectory(t *testing.T) {
+	ws := newTestWorkspace(t)
+	// A directory with no project entry behind it: the worktree path is
+	// still occupied, so Create would fail after the branch was made.
+	if err := os.MkdirAll(ws.ProjectWorktreePath("taken"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewService(newFakeGit())
+
+	err := svc.ValidateNewName(ws, "taken")
+	if err == nil {
+		t.Fatal("ValidateNewName(taken) = nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "directory already exists") {
+		t.Errorf("error = %q, want it to mention the existing directory", err.Error())
+	}
+}
