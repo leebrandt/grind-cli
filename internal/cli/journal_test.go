@@ -142,6 +142,52 @@ func TestReadJournalLongReverseFlag(t *testing.T) {
 	}
 }
 
+// TestReadJournalNoPagerFlag: --no-pager is the explicit opt-out on a
+// terminal, and it must produce exactly the same text.
+func TestReadJournalNoPagerFlag(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	writeJournalEntries(t, map[string]string{
+		"2026-09-13.md": "First entry content.",
+	})
+
+	out, err := execute(t, fake, "read", "journal", "--no-pager")
+	if err != nil {
+		t.Fatalf("read journal --no-pager: %v", err)
+	}
+	want := "─── Sunday, September 13, 2026 ───\n\nFirst entry content.\n"
+	if out != want {
+		t.Errorf("output = %q, want %q", out, want)
+	}
+}
+
+// TestReadJournalNeverPagesCapturedOutput pins the rule that matters for
+// scripts: when stdout is not a terminal the pager is never launched, so the
+// output is the plain text and nothing else.
+func TestReadJournalNeverPagesCapturedOutput(t *testing.T) {
+	fake, cleanup := runInWorkspace(t)
+	defer cleanup()
+	writeJournalEntries(t, map[string]string{
+		"2026-09-13.md": "First entry content.",
+	})
+
+	// A pager that would leave a marker file if it were ever run.
+	marker := filepath.Join(t.TempDir(), "pager-ran")
+	pager := filepath.Join(t.TempDir(), "recording-pager")
+	script := "#!/bin/sh\ntouch " + marker + "\ncat\n"
+	if err := os.WriteFile(pager, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PAGER", pager)
+
+	if _, err := execute(t, fake, "read", "journal"); err != nil {
+		t.Fatalf("read journal: %v", err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("pager ran with captured output; a pager must only run on a terminal")
+	}
+}
+
 func TestReadJournalEmpty(t *testing.T) {
 	fake, cleanup := runInWorkspace(t)
 	defer cleanup()

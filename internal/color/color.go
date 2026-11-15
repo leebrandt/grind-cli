@@ -15,7 +15,8 @@ package color
 
 import (
 	"io"
-	"os"
+
+	"github.com/leebrandt/grind/internal/terminal"
 )
 
 const (
@@ -34,18 +35,11 @@ type Palette struct {
 }
 
 // New returns a Palette that colors output written to w. Colors are only
-// emitted when w is a terminal: an *os.File whose mode has ModeCharDevice
-// set. Buffers and pipes get plain text.
+// emitted when w is a terminal. Buffers and pipes get plain text, and so does
+// a redirection to /dev/null — which is a character device but not a
+// terminal.
 func New(w io.Writer) Palette {
-	f, ok := w.(*os.File)
-	if !ok {
-		return Palette{}
-	}
-	info, err := f.Stat()
-	if err != nil {
-		return Palette{}
-	}
-	return Palette{enabled: info.Mode()&os.ModeCharDevice != 0}
+	return Palette{enabled: terminal.IsTerminal(w)}
 }
 
 // Red wraps s in red, the urgency color for overdue or due-today tasks.

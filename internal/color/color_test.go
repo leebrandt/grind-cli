@@ -2,6 +2,7 @@ package color
 
 import (
 	"bytes"
+	"os"
 	"testing"
 )
 
@@ -22,6 +23,22 @@ func TestNewOnBufferIsPlain(t *testing.T) {
 	}
 	if got := p.Dim("x"); got != "x" {
 		t.Errorf("Dim on buffer = %q, want plain %q", got, "x")
+	}
+}
+
+// TestNewOnDevNullIsPlain pins the difference between "character device"
+// and "terminal". /dev/null is the former and not the latter, so a command
+// redirected to it must not get ANSI codes — a file-mode check gets this
+// wrong, an ioctl check gets it right.
+func TestNewOnDevNullIsPlain(t *testing.T) {
+	f, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Skipf("cannot open %s: %v", os.DevNull, err)
+	}
+	defer f.Close()
+
+	if got := New(f).Red("x"); got != "x" {
+		t.Errorf("Red on %s = %q, want plain %q", os.DevNull, got, "x")
 	}
 }
 

@@ -5,11 +5,11 @@ import (
 	"io"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"github.com/leebrandt/grind/internal/color"
 	"github.com/leebrandt/grind/internal/status"
 	"github.com/leebrandt/grind/internal/tasks"
+	"github.com/leebrandt/grind/internal/terminal"
 	"github.com/leebrandt/grind/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -32,6 +32,9 @@ func newWwdCmd(statusSvc *status.Service, tasksSvc *tasks.Service) *cobra.Comman
 			}
 			out := cmd.OutOrStdout()
 			palette := color.New(out)
+			// 0 means "no constraint": a pipe or file gets the table at
+			// its natural width instead of a truncated one.
+			width, _, _ := terminal.Size(out)
 
 			// Part 1: the status table. No projects is not an error —
 			// v1 printed a hint and still showed the rest.
@@ -42,14 +45,14 @@ func newWwdCmd(statusSvc *status.Service, tasksSvc *tasks.Service) *cobra.Comman
 			if len(rows) == 0 {
 				fmt.Fprintln(out, `No active projects. Create one with: grind new project "name" <idea-number>`)
 			} else {
-				if err := renderStatusTable(out, rows, palette); err != nil {
+				if err := renderStatusTable(out, rows, palette, width); err != nil {
 					return err
 				}
 			}
 
 			// Part 2: the divider, boxed in blank lines.
 			fmt.Fprintln(out)
-			fmt.Fprintln(out, palette.Dim(divider()))
+			fmt.Fprintln(out, palette.Dim(divider(width)))
 			fmt.Fprintln(out)
 
 			// Part 3: the open-task list — the same rendering `list
@@ -58,7 +61,7 @@ func newWwdCmd(statusSvc *status.Service, tasksSvc *tasks.Service) *cobra.Comman
 			if err != nil {
 				return err
 			}
-			return renderTaskList(out, taskRows, "", false, tasksSvc.Today(), palette)
+			return renderTaskList(out, taskRows, "", false, tasksSvc.Today(), palette, width)
 		},
 	}
 	return cmd
@@ -87,8 +90,23 @@ func nameCell(row status.Row) string {
 // box-drawing dashes, " The GrindCLI ", and 30 more dashes. A constant
 // string would work, but building it from the counts keeps the two
 // halves self-documenting.
-func divider() string {
-	return " " + strings.Repeat("─", 27) + " The GrindCLI " + strings.Repeat("─", 30)
+//
+// When width is given and the full divider would not fit, the dashes are
+// eaten from the right first and then from the left, so the label stays
+// roughly centered instead of hugging one edge. width <= 0 means "no
+// constraint", which is what a pipe or a file gets.
+func divider(width int) string {
+	const label = " The GrindCLI "
+	left, right := 27, 30
+	if width > 0 {
+		for len(label)+left+right+1 > width && right > 1 {
+			right--
+		}
+		for len(label)+left+right+1 > width && left > 1 {
+			left--
+		}
+	}
+	return " " + strings.Repeat("─", left) + label + strings.Repeat("─", right)
 }
 
 // renderStatusTable writes the status table: one row per project, sorted
@@ -101,50 +119,53 @@ func divider() string {
 // project being worked on right now stays green even if it has unbilled
 // sessions behind it (v1 checked isActive first too).
 //
+// width is the terminal width in runes, or 0 for no constraint. When the
+// table is too wide it loses its least useful columns (Last Commit, then
+// Last Session) before the Project column is truncated, so a narrow terminal
+// stays readable rather than wrapping every row.
+//
 // The table is padded by hand rather than rendered through tabwriter:
 // tabwriter counts ANSI codes toward the cell width, so a colored cell in
 // a non-last column would push its row out of alignment. Padding the
 // plain text first and coloring the padded cell keeps the visible columns
 // straight — the same approach v1's Table class uses.
-func renderStatusTable(out io.Writer, rows []status.Row, palette color.Palette) error {
+func renderStatusTable(out io.Writer, rows []status.Row, palette color.Palette, width int) error {
 	// The Project header is indented by the marker gutter so it lines up
 	// with the names beneath it, whether or not a row carries a marker.
 	headers := []string{nameGutter + "Project", "Worked", "Tasks", "Last Session", "Last Commit"}
 
-	// Column widths come from the widest PLAIN cell (header included), so
-	// the padding math never sees ANSI codes.
-	widths := make([]int, len(headers))
-	for i, h := range headers {
-		widths[i] = utf8.RuneCountInString(h)
-	}
-	for _, row := range rows {
-		cells := []string{nameCell(row), row.WorkedHours, strconv.Itoa(row.TaskCount), row.LastSession, row.LastCommit}
-		for i, c := range cells {
-			if n := utf8.RuneCountInString(c); n > widths[i] {
-				widths[i] = n
-			}
-		}
+	// Cell text stays plain here: fitColumns truncates it, and color is
+	// applied after padding so the codes can never shift a column.
+	cells := make([][]string, len(rows))
+	for i, row := range rows {
+		cells[i] = []string{nameCell(row), row.WorkedHours, strconv.Itoa(row.TaskCount), row.LastSession, row.LastCommit}
 	}
 
+	// Project is the text column; Worked, Tasks and one time column are
+	// the minimum that still tells the user something.
+	headers, cells, widths := fitColumns(width, headers, cells, []int{0}, 3)
+
 	fmt.Fprintln(out, renderRow(headers, widths))
-	for _, row := range rows {
+	for i, row := range rows {
 		// Color is applied AFTER padding: the visible text is already
 		// column-width wide, so the ANSI codes cannot shift it.
-		name := padRight(nameCell(row), widths[0])
+		name := padRight(cells[i][0], widths[0])
 		switch {
 		case row.IsActive:
 			name = palette.Green(name)
 		case row.HasUnbilled:
 			name = palette.Yellow(name)
 		}
-		taskCount := padRight(strconv.Itoa(row.TaskCount), widths[2])
+		taskCount := padRight(cells[i][2], widths[2])
 		switch row.TaskUrgency {
 		case "overdue":
 			taskCount = palette.Red(taskCount)
 		case "today":
 			taskCount = palette.Yellow(taskCount)
 		}
-		fmt.Fprintln(out, renderRow([]string{name, row.WorkedHours, taskCount, row.LastSession, row.LastCommit}, widths))
+		cells[i][0] = name
+		cells[i][2] = taskCount
+		fmt.Fprintln(out, renderRow(cells[i], widths))
 	}
 	return nil
 }

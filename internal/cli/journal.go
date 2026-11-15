@@ -2,11 +2,13 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/leebrandt/grind/internal/clock"
 	"github.com/leebrandt/grind/internal/editor"
 	"github.com/leebrandt/grind/internal/journal"
+	"github.com/leebrandt/grind/internal/pager"
 	"github.com/leebrandt/grind/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -62,18 +64,19 @@ func newReadCmd() *cobra.Command {
 
 	journalCmd := &cobra.Command{
 		Use:   "journal",
-		Short: "Read journal entries",
+		Short: "Read journal entries in your pager",
 		Args:  cobra.NoArgs,
 		RunE:  readJournalRunE,
 	}
 	journalCmd.Flags().BoolP("reverse", "r", false, "newest first")
+	journalCmd.Flags().Bool("no-pager", false, "print to stdout instead of the pager")
 	read.AddCommand(journalCmd)
 
 	return read
 }
 
-// readJournalRunE prints all journal entries to stdout, oldest first. An
-// empty journal prints nothing and exits 0 (v1 behavior).
+// readJournalRunE renders all journal entries oldest first and shows them in
+// the pager. An empty journal prints nothing and exits 0 (v1 behavior).
 func readJournalRunE(cmd *cobra.Command, args []string) error {
 	ws, err := workspace.Require(".")
 	if err != nil {
@@ -87,8 +90,9 @@ func readJournalRunE(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	// The flag is registered in newReadCmd, so GetBool cannot fail here.
+	// Both flags are registered in newReadCmd, so GetBool cannot fail here.
 	reverse, _ := cmd.Flags().GetBool("reverse")
+	noPager, _ := cmd.Flags().GetBool("no-pager")
 	if reverse {
 		// The list is already sorted oldest first, so swapping the ends
 		// gives newest first.
@@ -111,7 +115,14 @@ func readJournalRunE(cmd *cobra.Command, args []string) error {
 		// cleaned.
 		blocks = append(blocks, fmt.Sprintf("─── %s ───\n\n%s", journal.FormatLongDate(date), strings.TrimRight(content, "\n")))
 	}
-	// Fprintln adds the trailing newline, matching v1's console.log.
-	fmt.Fprintln(cmd.OutOrStdout(), strings.Join(blocks, "\n\n"))
-	return nil
+	// The trailing newline matches v1's console.log.
+	text := strings.Join(blocks, "\n\n") + "\n"
+
+	if noPager {
+		_, err := io.WriteString(cmd.OutOrStdout(), text)
+		return err
+	}
+	// Page degrades to a plain write when stdout is not a terminal, so
+	// `grind read journal > journal.txt` and `... | grep` keep working.
+	return pager.Page(cmd.OutOrStdout(), text)
 }

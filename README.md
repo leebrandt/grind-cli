@@ -386,12 +386,17 @@ No options beyond `-h, --help`.
 
 **grind read journal** `[<options>]`
 
-Prints every journal entry to stdout, oldest first, each under a long-form
-date heading. An empty journal prints nothing and exits successfully.
+Prints every journal entry, oldest first, each under a long-form date heading,
+through your pager. An empty journal prints nothing and exits successfully.
+
+Paging only happens when stdout is a terminal: redirecting or piping the
+command (`grind read journal > journal.txt`, `grind read journal | grep x`)
+prints the plain text. The pager comes from `$PAGER` and defaults to `less`.
 
 | Option | Description |
 |---|---|
 | `-r, --reverse` | Print newest first. |
+| `--no-pager` | Print to stdout even on a terminal. |
 
 #### config
 
@@ -472,7 +477,7 @@ These commands work but are omitted from `grind --help`:
 | `grind projects` | `grind list projects` |
 | `grind tasks` | `grind list tasks` |
 | `grind journal` | `grind edit journal` |
-| `grind wwd` | The status dashboard: per-project worked time, task counts, last session, last commit, then every open task. Project names are green while a session is active and yellow while unbilled work remains. |
+| `grind wwd` | The status dashboard: per-project worked time, task counts, last session, last commit, then every open task. Project names are green while a session is active and yellow while unbilled work remains. The tables fit the terminal width — long names are truncated, and on a narrow terminal the least useful columns are dropped rather than wrapped. |
 | `grind completion <shell>` | Generates shell completion for `bash`, `zsh`, `fish`, or `powershell`. |
 
 ### GLOBAL OPTIONS
@@ -522,10 +527,13 @@ number of hours (`5`), hours with an `h` suffix (`5h`, `1.5h`), minutes with an
 |---|---|
 | `EDITOR` | Editor command used by `new idea`, `edit`, `work`, and `edit journal`. Split on whitespace, so values like `code --wait` work. |
 | `VISUAL` | Fallback when `EDITOR` is unset. |
+| `PAGER` | Pager command used by `read journal`. Split on whitespace, so values like `less -R` work. Defaults to `less`. |
 | `TZ` | Local timezone. It decides the journal's date filename and the local days used on invoices; session timestamps themselves are stored in UTC. |
 
-If neither `EDITOR` nor `VISUAL` is set, the editor is `vi`. Colors are emitted
-only when stdout is a terminal, so piped output is plain text.
+If neither `EDITOR` nor `VISUAL` is set, the editor is `vi`. Nothing that only
+makes sense on a screen is emitted for a pipe: colors, paging, and column
+fitting all apply only when stdout is a terminal. Redirected output is plain
+text at its natural width, so it diffs and greps cleanly.
 
 ### FILES
 

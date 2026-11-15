@@ -201,7 +201,7 @@ verb set, each verb means exactly one thing:
 | `publish` / `cancel` | project lifecycle | `publish my-blog`, `cancel my-blog` |
 | `invoice` | bill billable work | `invoice my-blog`, `invoice my-blog -n` |
 | `migrate` | convert a v1 workspace | `grind migrate`, `grind migrate -n` |
-| `read` | print to stdout | `read journal` |
+| `read` | read long output | `read journal` |
 | `finish` | complete a task | `finish task 3` |
 | `config` | get/set/list config | `grind config`, `grind config billing.defaultRate 200`, `grind config my-blog billing.rate 250` |
 
@@ -216,6 +216,20 @@ Rules:
 - **Hidden commands** exist for power users: `grind wwd` (status + tasks
   dashboard) is the user's most-used command and must stay hidden from
   `--help` (Cobra `Hidden: true`). It's the secret handshake.
+- **Long output pages only on a terminal.** `grind read journal` runs its
+  text through `$PAGER` (default `less`). When stdout is not a terminal —
+  redirected to a file, piped to another program, captured by a test — the
+  text is written verbatim, because a pager in a pipe is not interactive and
+  would only add escape codes. `--no-pager` opts out on a terminal.
+- **Tables fit the terminal.** `wwd` and `list tasks` shrink their text
+  columns to the terminal width and, when even the minimums do not fit, drop
+  the least useful trailing columns — never the text column, never below the
+  minimum the table needs to say anything. A pipe or a file gets width 0, which
+  means "no constraint": every column at its natural width, no ellipses.
+- **One home for "is this a terminal".** `internal/terminal` wraps
+  `golang.org/x/term`, because `os.ModeCharDevice` lies about `/dev/null`.
+  `internal/color`, `internal/pager` and the table renderers all ask it
+  instead of hand-rolling the check.
 
 ### Publishing (future slice)
 

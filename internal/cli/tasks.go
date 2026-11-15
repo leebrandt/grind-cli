@@ -6,13 +6,13 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/leebrandt/grind/internal/color"
 	"github.com/leebrandt/grind/internal/dates"
 	"github.com/leebrandt/grind/internal/grinderr"
 	"github.com/leebrandt/grind/internal/projects"
 	"github.com/leebrandt/grind/internal/tasks"
+	"github.com/leebrandt/grind/internal/terminal"
 	"github.com/leebrandt/grind/internal/workspace"
 	"github.com/spf13/cobra"
 )
@@ -114,7 +114,10 @@ func listTasksRunE(svc *tasks.Service) func(cmd *cobra.Command, args []string) e
 		}
 
 		out := cmd.OutOrStdout()
-		return renderTaskList(out, rows, projectName, all, svc.Today(), color.New(out))
+		// 0 means "no constraint" — a pipe or a file keeps the natural
+		// table width.
+		width, _, _ := terminal.Size(out)
+		return renderTaskList(out, rows, projectName, all, svc.Today(), color.New(out), width)
 	}
 }
 
@@ -125,7 +128,9 @@ func listTasksRunE(svc *tasks.Service) func(cmd *cobra.Command, args []string) e
 // tasks and changes the empty state's wording.
 // today is passed in rather than read from the clock: a renderer that
 // takes data is testable, and the caller decides what day it is.
-func renderTaskList(out io.Writer, rows []tasks.TaskRow, projectName string, all bool, today string, palette color.Palette) error {
+// width is the terminal width in runes, or 0 for no constraint: a narrow
+// terminal truncates the task description rather than wrapping the row.
+func renderTaskList(out io.Writer, rows []tasks.TaskRow, projectName string, all bool, today string, palette color.Palette, width int) error {
 	if len(rows) == 0 {
 		switch {
 		case projectName != "" && !all:
@@ -144,25 +149,28 @@ func renderTaskList(out io.Writer, rows []tasks.TaskRow, projectName string, all
 	// status table: tabwriter counts ANSI codes toward the cell width, so
 	// colored or dimmed cells would push their row out of alignment.
 	var headers []string
+	var cells [][]string
+	// The user-supplied text is what yields: the project name and the
+	// description both shrink, while # and Due are fixed-width. No column
+	// is droppable — every one of these carries information the status
+	// table's time columns do not.
+	shrinkable := []int{1}
 	if projectName == "" {
 		headers = []string{"#", "Project", "Task", "Due"}
+		shrinkable = []int{1, 2}
 	} else {
 		headers = []string{"#", "Task", "Due"}
 	}
-	widths := make([]int, len(headers))
-	for i, h := range headers {
-		widths[i] = utf8.RuneCountInString(h)
-	}
 	for _, row := range rows {
-		for i, c := range taskCells(row, projectName, row.DueDate) {
-			if n := utf8.RuneCountInString(c); n > widths[i] {
-				widths[i] = n
-			}
-		}
+		cells = append(cells, taskCells(row, projectName, row.DueDate))
 	}
+	// Due dates are colored later, so the fit sees the plain YYYY-MM-DD
+	// form. The em dash that replaces an empty one is one rune, narrower
+	// than the "Due" header, so it can never widen the column.
+	headers, cells, widths := fitColumns(width, headers, cells, shrinkable, len(headers))
 
 	fmt.Fprintln(out, renderRow(headers, widths))
-	for _, row := range rows {
+	for i, row := range rows {
 		due := row.DueDate
 		if due == "" {
 			// An em dash keeps the column aligned when no due date is
@@ -171,15 +179,17 @@ func renderTaskList(out io.Writer, rows []tasks.TaskRow, projectName string, all
 		} else if !row.Done {
 			due = colorDue(palette, due, today)
 		}
-		cells := taskCells(row, projectName, due)
+		// Re-pad from the fitted cells, not from row.DueDate: a truncated
+		// description must keep the columns where the header put them.
+		cells[i][len(cells[i])-1] = due
 		if row.Done {
 			// Completed rows render dimmed. The whole padded line is
 			// wrapped (not each cell) so the dim attribute reads as one
 			// block; the padding was applied to plain text, so the codes
 			// cannot shift the columns.
-			fmt.Fprintln(out, palette.Dim(renderRow(cells, widths)))
+			fmt.Fprintln(out, palette.Dim(renderRow(cells[i], widths)))
 		} else {
-			fmt.Fprintln(out, renderRow(cells, widths))
+			fmt.Fprintln(out, renderRow(cells[i], widths))
 		}
 	}
 	return nil
