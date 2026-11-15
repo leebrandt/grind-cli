@@ -213,6 +213,12 @@ Rules:
 - **Natural shortcuts** exist for the most-used commands: `grind ideas` =
   `grind list ideas`, `grind projects` = `grind list projects`, `grind tasks`
   = `grind list tasks`.
+- **`new project` has two forms.** `grind new project` (no arguments) is the
+  interactive wizard: it lists the ideas, asks which one to promote, suggests
+  a branch-safe name, shows a confirm summary, and creates nothing until the
+  user says yes. `grind new project <name> <idea-number>` is the
+  non-interactive original and never prompts. Both print the same success
+  block ending in `Next: work <name>`; neither re-lists the ideas afterwards.
 - **Hidden commands** exist for power users: `grind wwd` (status + tasks
   dashboard) is the user's most-used command and must stay hidden from
   `--help` (Cobra `Hidden: true`). It's the secret handshake.
@@ -358,6 +364,7 @@ and what's next.
 | 9 | Publish/cancel | ✅ done |
 | 10 | Invoice | ✅ done |
 | 11 | Migrate (v1 workspace conversion) | ✅ done |
+| 12 | Interactive new project | ✅ done |
 
 ## Build & test
 

@@ -43,7 +43,8 @@ existing workspace.
 ```bash
 grind new idea "A thing worth building"   # capture an idea
 grind ideas                               # list ideas (0, 1, 2, ...)
-grind new project my-blog 0               # promote idea 0 into a project worktree
+grind new project                         # promote one interactively
+grind new project my-blog 0               # ...or non-interactively
 grind work my-blog                        # start a time-tracking session
 grind save my-blog                        # end it, and commit
 grind wwd                                 # status dashboard (the secret handshake)
@@ -177,16 +178,53 @@ file without a title aborts without writing anything.
 
 No options beyond `-h, --help`.
 
-**grind new project** `<name> <idea-number> [<options>]`
+**grind new project** `[<name> <idea-number>] [<options>]`
 
-Promotes idea `<idea-number>` into a project. Creates a branch and worktree
-named `<name>`, copies the idea's title into the project entry, deletes the
-idea file, and commits the state change. Billing values are copied from the
-workspace defaults at this moment.
+Promotes an idea into a project. There are two forms:
+
+- `grind new project` — interactive. It lists the promotable ideas with the
+  same numbers `grind list ideas` shows, asks `Idea number:`, and suggests a
+  branch-safe project name derived from the chosen idea's title (`My Blog`
+  becomes `my-blog`; press Enter to accept it). Before writing anything it
+  prints the values it is about to store and asks for confirmation:
+
+  ```text
+  Project:  my-blog
+  Branch:   my-blog
+  Worktree: my-blog/
+  Type:     blog
+  Idea:     My Blog
+  Rate:     $150/hr (quarter-hour)
+
+  Create project? [Y/n]
+  ```
+
+  An invalid idea number or project name prints the same error the
+  non-interactive form would print and asks again — it never exits. Enter or
+  `y` creates the project; `n` aborts; end-of-input (Ctrl+D) aborts. Neither
+  abort writes anything. A workspace with no promotable ideas prints a
+  one-line hint and exits without asking.
+
+- `grind new project <name> <idea-number>` — non-interactive. Creates the
+  project in one shot and prompts for nothing, which is what scripts use.
+
+Both forms create a branch and worktree named `<name>`, copy the idea's title
+into the project entry, delete the idea file, and commit the state change.
+Billing values are copied from the workspace defaults at this moment. Both
+finish with the same block, naming the verb that starts tracking time:
+
+```text
+Created project: my-blog
+Branch: my-blog
+Worktree: my-blog/
+Next: work my-blog
+```
+
+The remaining ideas are not re-listed; run `grind list ideas` for that.
 
 | Option | Description |
 |---|---|
-| `-t, --type <type>` | Project type. Must be one of the workspace's configured `projectTypes`. |
+| `-t, --type <type>` | Project type. Must be one of the workspace's configured `projectTypes`. Applies to both forms; in the interactive form it is validated before the first question, and the type is never prompted for. |
 
 **grind new task** `<project> <description> [<options>]`
 
