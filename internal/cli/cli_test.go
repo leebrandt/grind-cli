@@ -474,8 +474,8 @@ func TestVersionFlag(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out != "0.98.9\n" {
-		t.Errorf("output = %q, want %q", out, "0.98.9\n")
+	if out != "0.99.0\n" {
+		t.Errorf("output = %q, want %q", out, "0.99.0\n")
 	}
 }
 
@@ -500,11 +500,11 @@ func TestNewProjectCommand(t *testing.T) {
 	if !strings.Contains(out, "Worktree: my-blog/") {
 		t.Errorf("output = %q", out)
 	}
-	if !strings.Contains(out, "Next: cd my-blog") {
+	if !strings.Contains(out, "Next: work my-blog") {
 		t.Errorf("output = %q", out)
 	}
-	if !strings.Contains(out, "Remaining ideas:") {
-		t.Errorf("output = %q", out)
+	if strings.Contains(out, "Remaining ideas:") {
+		t.Errorf("output should not re-list ideas: %q", out)
 	}
 
 	// CreateBranch must have been called with the project name.
