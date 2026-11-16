@@ -20,21 +20,43 @@ func padRight(s string, width int) string {
 	return s
 }
 
-// renderRow pads cells to their column widths and joins them with two
-// spaces. The last cell is not padded — nothing follows it, so trailing
-// spaces would only pollute the line.
-func renderRow(cells []string, widths []int) string {
+// padLeft returns s padded with leading spaces to width runes. It is the
+// mirror of padRight, for the numeric columns whose figures line up on their
+// right edge.
+func padLeft(s string, width int) string {
+	if n := width - utf8.RuneCountInString(s); n > 0 {
+		return strings.Repeat(" ", n) + s
+	}
+	return s
+}
+
+// renderRowAligned pads cells to their column widths and joins them with two
+// spaces, aligning each cell left or right according to right. A nil right
+// means "every cell left", which is what renderRow wants.
+//
+// The last cell is padded only when it is right-aligned: left-aligned trailing
+// spaces would only pollute the line, but a right-aligned figure needs its
+// leading spaces to sit under the column above it.
+func renderRowAligned(cells []string, widths []int, right []bool) string {
 	var b strings.Builder
 	for i, c := range cells {
 		if i > 0 {
 			b.WriteString("  ")
 		}
-		if i < len(cells)-1 {
+		switch {
+		case right != nil && right[i]:
+			c = padLeft(c, widths[i])
+		case i < len(cells)-1:
 			c = padRight(c, widths[i])
 		}
 		b.WriteString(c)
 	}
 	return b.String()
+}
+
+// renderRow is renderRowAligned with no right-aligned columns.
+func renderRow(cells []string, widths []int) string {
+	return renderRowAligned(cells, widths, nil)
 }
 
 // truncate shortens s to at most width runes, marking the cut with an

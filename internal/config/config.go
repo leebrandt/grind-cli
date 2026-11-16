@@ -128,6 +128,15 @@ type ProjectEntry struct {
 	// of the file. Only the publish/cancel verbs write it; the config
 	// command lists it read-only.
 	Status string `json:"status,omitempty"`
+	// PublishedAt is when the project last went out (Status "published").
+	// It records WHEN the project entered that state; Status is still the
+	// single source of truth for WHICH state. Nil for a project that was
+	// never published, or published before this field existed.
+	PublishedAt *time.Time `json:"publishedAt,omitempty"`
+
+	// CanceledAt is when the project last died (Status "canceled"), with the
+	// same "last event wins" meaning.
+	CanceledAt *time.Time `json:"canceledAt,omitempty"`
 }
 
 // ClientInfo is the invoice "TO" block for a project's client.

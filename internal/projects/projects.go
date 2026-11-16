@@ -354,13 +354,17 @@ func (s *Service) Publish(ws *workspace.Workspace, name string, cleanup Cleanup)
 	}
 
 	entry.Status = "published"
+	now := s.Clock.Now().UTC().Truncate(time.Second)
+	// Every publish re-stamps, even a re-publish: the timestamp means "when
+	// this project last went out", not "when it first did".
+	entry.PublishedAt = &now
 	if err := writeEntry(ws, name, *entry); err != nil {
 		return err
 	}
-	// Re-publishing can leave .projects.json unchanged: when the project is
-	// already published, the status write is a no-op. Skip the commit
-	// instead of failing with git's "nothing to commit". The merge already
-	// captured the branch change.
+	// A publish now always writes a new timestamp, so .projects.json always
+	// changes and the commit always fires. The guard stays anyway: it is
+	// still the right test for a no-op write, and removing it would make the
+	// commit unconditional.
 	projectsClean, err := s.Git.IsPathClean(ws.MainWorktree, ".projects.json")
 	if err != nil {
 		return err
@@ -395,6 +399,10 @@ func (s *Service) Cancel(ws *workspace.Workspace, name string, cleanup Cleanup) 
 	}
 
 	entry.Status = "canceled"
+	now := s.Clock.Now().UTC().Truncate(time.Second)
+	// Every cancel re-stamps, so the timestamp always means "when this
+	// project last died".
+	entry.CanceledAt = &now
 	// Outstanding tasks die with the project: an open task on a canceled
 	// project is no longer actionable, so it is marked canceled and hidden
 	// from the task list. Done tasks stay done — they were completed before

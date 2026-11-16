@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/leebrandt/grind/internal/clock"
 	"github.com/leebrandt/grind/internal/config"
 	"github.com/leebrandt/grind/internal/git"
 	"github.com/leebrandt/grind/internal/grinderr"
@@ -715,6 +716,7 @@ func TestPublishHappyPath(t *testing.T) {
 	// commit fires.
 	fake.dirtyPaths = map[string]bool{".projects.json": true}
 	svc := NewService(fake)
+	svc.Clock = clock.NewFake(testNow)
 
 	if err := svc.Publish(ws, "my-blog", CleanupBoth); err != nil {
 		t.Fatal(err)
@@ -732,6 +734,17 @@ func TestPublishHappyPath(t *testing.T) {
 	}
 	if got := projects.Projects["my-blog"].Status; got != "published" {
 		t.Errorf("Status = %q, want published", got)
+	}
+
+	// The publish stamps when it happened, from the service clock, so a
+	// weekly report can say which week the project went out. The value is
+	// stored UTC and truncated to the second so the JSON is stable.
+	publishedAt := projects.Projects["my-blog"].PublishedAt
+	if publishedAt == nil {
+		t.Fatal("PublishedAt = nil, want the publish instant")
+	}
+	if want := testNow.UTC().Truncate(time.Second); !publishedAt.Equal(want) {
+		t.Errorf("PublishedAt = %v, want %v", publishedAt, want)
 	}
 
 	// One commit: the publish commit staging .projects.json.
@@ -865,22 +878,37 @@ func TestPublishMergeFailure(t *testing.T) {
 	}
 }
 
-func TestPublishRePublishNoChange(t *testing.T) {
+func TestPublishRePublishStampsAndCommits(t *testing.T) {
 	ws := newTestWorkspace(t)
 	addProjectEntry(t, ws, "my-blog", "")
 	addProjectWorktree(t, ws, "my-blog")
 	fake := newFakeGit()
-	// Re-publishing when the project is already published means the status
-	// write is a no-op and .projects.json is unchanged. The publish commit
-	// must be skipped instead of failing with "nothing to commit".
+	// This test used to be "no change, no commit". Since a publish now
+	// always writes a new publishedAt, the write always dirties
+	// .projects.json and the commit always fires — so the commit is the
+	// point of the test, not its absence. dirtyPaths stands in for the
+	// real timestamp write, which the fake git does not perform.
+	fake.dirtyPaths = map[string]bool{".projects.json": true}
 	svc := NewService(fake)
+	svc.Clock = clock.NewFake(testNow)
 
 	if err := svc.Publish(ws, "my-blog", CleanupNone); err != nil {
 		t.Fatal(err)
 	}
-	// No commit because nothing changed.
-	if len(fake.commits) != 0 {
-		t.Errorf("commits = %d, want 0 (nothing changed, commit should be skipped)", len(fake.commits))
+	// A re-publish re-stamps, so the commit must still fire.
+	if len(fake.commits) != 1 {
+		t.Fatalf("commits = %d, want 1 (re-publish re-stamps)", len(fake.commits))
+	}
+	projects, err := config.ReadProjects(ws.ProjectsConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := projects.Projects["my-blog"].PublishedAt
+	if got == nil {
+		t.Fatal("PublishedAt = nil, want the re-publish instant")
+	}
+	if want := testNow.UTC().Truncate(time.Second); !got.Equal(want) {
+		t.Errorf("PublishedAt = %v, want %v", got, want)
 	}
 }
 
@@ -890,6 +918,7 @@ func TestCancelHappyPath(t *testing.T) {
 	addProjectWorktree(t, ws, "my-blog")
 	fake := newFakeGit()
 	svc := NewService(fake)
+	svc.Clock = clock.NewFake(testNow)
 
 	if err := svc.Cancel(ws, "my-blog", CleanupWorktree); err != nil {
 		t.Fatal(err)
@@ -902,6 +931,15 @@ func TestCancelHappyPath(t *testing.T) {
 	}
 	if got := projects.Projects["my-blog"].Status; got != "canceled" {
 		t.Errorf("Status = %q, want canceled", got)
+	}
+
+	// The cancel stamps when it happened, from the service clock.
+	canceledAt := projects.Projects["my-blog"].CanceledAt
+	if canceledAt == nil {
+		t.Fatal("CanceledAt = nil, want the cancel instant")
+	}
+	if want := testNow.UTC().Truncate(time.Second); !canceledAt.Equal(want) {
+		t.Errorf("CanceledAt = %v, want %v", canceledAt, want)
 	}
 
 	// One commit staging only .projects.json.

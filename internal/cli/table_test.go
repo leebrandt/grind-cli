@@ -178,3 +178,43 @@ func TestFitColumnsNeverDropsFlexible(t *testing.T) {
 		t.Errorf("flexible width = %d, want the floor %d", widths[1], minFlexibleWidth)
 	}
 }
+
+// TestRenderRowAligned pins the two rules that make the hwd table scannable:
+// a right-aligned cell is padded on the left, and a left-aligned LAST cell is
+// not padded at all (trailing spaces would only pollute the line).
+func TestRenderRowAligned(t *testing.T) {
+	widths := []int{6, 4, 4}
+
+	t.Run("right aligns numerics", func(t *testing.T) {
+		got := renderRowAligned([]string{"blog", "3.0h", "450"}, widths, []bool{false, true, true})
+		want := "blog    3.0h   450"
+		if got != want {
+			t.Errorf("renderRowAligned = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("last cell unpadded when left", func(t *testing.T) {
+		got := renderRowAligned([]string{"blog", "3.0h", "450"}, widths, []bool{false, false, false})
+		want := "blog    3.0h  450"
+		if got != want {
+			t.Errorf("renderRowAligned = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("nil right means every cell left", func(t *testing.T) {
+		aligned := renderRowAligned([]string{"blog", "3.0h", "450"}, widths, nil)
+		if plain := renderRow([]string{"blog", "3.0h", "450"}, widths); aligned != plain {
+			t.Errorf("renderRowAligned(nil) = %q, renderRow = %q, want identical", aligned, plain)
+		}
+	})
+
+	t.Run("short right slice right-aligns the prefix only", func(t *testing.T) {
+		// fitColumns drops trailing columns, so right loses the same ones;
+		// only the surviving prefix is consulted.
+		got := renderRowAligned([]string{"blog", "3.0h"}, []int{6, 4}, []bool{false, true})
+		want := "blog    3.0h"
+		if got != want {
+			t.Errorf("renderRowAligned = %q, want %q", got, want)
+		}
+	})
+}

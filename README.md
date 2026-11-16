@@ -516,6 +516,7 @@ These commands work but are omitted from `grind --help`:
 | `grind tasks` | `grind list tasks` |
 | `grind journal` | `grind edit journal` |
 | `grind wwd` | The status dashboard: per-project worked time, task counts, last session, last commit, then every open task. Project names are green while a session is active and yellow while unbilled work remains. The tables fit the terminal width — long names are truncated, and on a narrow terminal the least useful columns are dropped rather than wrapped. |
+| `grind hwd` | The hours-worked weekly report: one week's hours per project, what they would bill for, how much of that is already invoiced, and which projects finished. `-w N` reports the complete week N weeks back (`-w 1` is last week). Read-only: it never writes, commits, or touches a worktree. |
 | `grind completion <shell>` | Generates shell completion for `bash`, `zsh`, `fish`, or `powershell`. |
 
 ### GLOBAL OPTIONS

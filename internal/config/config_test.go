@@ -158,3 +158,58 @@ func TestDefaultProjectsStartsTaskCounterAt100(t *testing.T) {
 		t.Errorf("NextTaskID = %d, want 100", cfg.NextTaskID)
 	}
 }
+
+// TestProjectsRoundTripWithoutTimestamps is AC-032: a workspace written before
+// publishedAt/canceledAt existed loads and saves byte-identically, with
+// version still 1 and neither key appearing. The fields are additive, not a
+// migration.
+func TestProjectsRoundTripWithoutTimestamps(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".projects.json")
+
+	// A pre-slice-13 file: one project, no publishedAt/canceledAt keys.
+	before := "{\n" +
+		"  \"version\": 1,\n" +
+		"  \"nextTaskId\": 100,\n" +
+		"  \"projects\": {\n" +
+		"    \"my-blog\": {\n" +
+		"      \"name\": \"my-blog\",\n" +
+		"      \"idea\": \"My blog\",\n" +
+		"      \"billing\": {\n" +
+		"        \"roundTo\": \"quarter-hour\",\n" +
+		"        \"rate\": 150\n" +
+		"      },\n" +
+		"      \"createdAt\": \"2026-01-01T00:00:00Z\"\n" +
+		"    }\n" +
+		"  }\n" +
+		"}\n"
+	if err := os.WriteFile(path, []byte(before), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := ReadProjects(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Version != 1 {
+		t.Errorf("Version = %d, want 1", cfg.Version)
+	}
+	entry := cfg.Projects["my-blog"]
+	if entry.PublishedAt != nil || entry.CanceledAt != nil {
+		t.Errorf("timestamps = %v/%v, want both nil", entry.PublishedAt, entry.CanceledAt)
+	}
+
+	if err := WriteProjects(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != before {
+		t.Errorf("round-trip changed the file:\nbefore: %q\nafter:  %q", before, after)
+	}
+	if strings.Contains(string(after), "publishedAt") || strings.Contains(string(after), "canceledAt") {
+		t.Errorf("round-trip resurrected the timestamp keys:\n%s", after)
+	}
+}

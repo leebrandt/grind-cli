@@ -221,7 +221,9 @@ Rules:
   block ending in `Next: work <name>`; neither re-lists the ideas afterwards.
 - **Hidden commands** exist for power users: `grind wwd` (status + tasks
   dashboard) is the user's most-used command and must stay hidden from
-  `--help` (Cobra `Hidden: true`). It's the secret handshake.
+  `--help` (Cobra `Hidden: true`). It's the secret handshake. `grind hwd`
+  (the weekly hours-worked report, `-w N` for N weeks back) is the second
+  hidden command, read-only like `wwd`.
 - **Long output pages only on a terminal.** `grind read journal` runs its
   text through `$PAGER` (default `less`). When stdout is not a terminal —
   redirected to a file, piped to another program, captured by a test — the
@@ -365,6 +367,7 @@ and what's next.
 | 10 | Invoice | ✅ done |
 | 11 | Migrate (v1 workspace conversion) | ✅ done |
 | 12 | Interactive new project | ✅ done |
+| 13 | Hours-worked report (`hwd`) | ✅ done |
 
 ## Build & test
 
